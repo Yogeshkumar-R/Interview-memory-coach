@@ -7,3 +7,6 @@ pyvis
 python-dotenv
 pandas
 pyttsx3
+fastapi
+uvicorn[standard]
+python-multipart

@@ -10,21 +10,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Install dependencies
-pip install cognee groq streamlit PyMuPDF pyvis
+pip install -r requirements.txt
 
 # Seed synthetic memory data (run before demo)
 python seed_memory.py
 
-# Run the app
+# Run the main app (FastAPI + full chat UI with voice)
+uvicorn server:app --reload --port 8000
+# then open http://localhost:8000
+
+# Run the legacy Streamlit app (backup)
 streamlit run app.py
 
-# Run the Day 1 smoke test to verify Cognee + Anthropic integration
+# Run the Day 1 smoke test to verify Cognee + Groq integration
 python smoke_test.py
 ```
 
 ## Architecture
 
-Three-layer stack: Streamlit UI → Python agents (raw Anthropic SDK) → Cognee memory.
+Three-layer stack: FastAPI + HTML/JS UI → Python agents (Groq SDK) → Cognee memory.
 
 ```
 UI (app.py)
