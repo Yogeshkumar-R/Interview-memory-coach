@@ -9,15 +9,55 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency
+    load_dotenv = None
+
+
+def _load_env_file(env_path: Path | None = None) -> None:
+    path = env_path or Path(__file__).resolve().parents[1] / ".env"
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+
+        os.environ.setdefault(key, value)
+
 
 def _cognee_config():
     """
     LLM  → Groq (via LiteLLM groq/ prefix)
     Embeddings → FastEmbed (local, no API key — Groq has no embedding endpoint)
     """
-    groq_key = os.getenv("GROQ_API_KEY", "")
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    if load_dotenv and env_path.exists():
+        load_dotenv(env_path, override=False)
+    else:
+        _load_env_file(env_path)
+
+    groq_key = (
+        os.getenv("GROQ_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or os.getenv("LLM_API_KEY")
+        or ""
+    ).strip()
+
     os.environ["COGNEE_SKIP_CONNECTION_TEST"] = "true"
     os.environ["GROQ_API_KEY"] = groq_key
+    os.environ["OPENAI_API_KEY"] = groq_key
+    os.environ["LLM_API_KEY"] = groq_key
+    os.environ["OPENAI_API_BASE"] = os.getenv("OPENAI_API_BASE", "https://api.groq.com/openai/v1")
+
     # Tell Cognee/LiteLLM to use local FastEmbed for vectors
     os.environ["EMBEDDING_PROVIDER"] = "fastembed"
     os.environ["EMBEDDING_MODEL"] = "BAAI/bge-small-en-v1.5"
@@ -26,6 +66,8 @@ def _cognee_config():
         cognee.config.set_llm_provider("openai")
         cognee.config.set_llm_model("groq/llama-3.3-70b-versatile")
         cognee.config.set_llm_api_key(groq_key)
+        if hasattr(cognee.config, "set_llm_base_url"):
+            cognee.config.set_llm_base_url("https://api.groq.com/openai/v1")
         try:
             cognee.config.set_embedding_model("BAAI/bge-small-en-v1.5")
             cognee.config.set_embedding_provider("fastembed")
