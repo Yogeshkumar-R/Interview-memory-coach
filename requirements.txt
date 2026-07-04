@@ -6,3 +6,4 @@ PyMuPDF
 pyvis
 python-dotenv
 pandas
+pyttsx3

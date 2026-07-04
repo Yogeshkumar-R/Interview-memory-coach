@@ -190,6 +190,9 @@ _DEFAULTS = {
     "report": None,
     "messages": [],
     "interview_ended": False,
+    # voice
+    "_pending_voice_answer": None,
+    "_voice_transcript_preview": None,
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -223,7 +226,10 @@ def _header(active: str):
 import agents.intake as _intake
 import agents.interviewer as _interviewer
 import agents.analysis as _analysis
+import agents.memory as _memory
 from agents.memory import forget_candidate as _forget
+from agents.voice import transcribe_audio as _transcribe
+from agents.guardrails import validate_candidate_id as _validate_cid, sanitize as _sanitize
 
 
 async def _session_start(jd: str, resume_text: str, candidate_id: str) -> dict:
@@ -357,27 +363,45 @@ def _page_upload():
         can_start = bool(candidate_id and jd_text and resume_file)
 
         if st.button("Start Interview  →", disabled=not can_start, use_container_width=True):
+            # ── Guardrail: validate candidate ID ──────────────────────────────
+            cid_valid, cid_err = _validate_cid(candidate_id)
+            if not cid_valid:
+                st.error(cid_err)
+                return
+
+            # ── Guardrail: sanitize JD text ───────────────────────────────────
+            jd_clean, jd_warns = _sanitize(jd_text, "jd")
+            for w in jd_warns:
+                st.warning(f"Job description: {w}")
+
             with st.spinner("Parsing documents and initialising memory graph…"):
                 try:
                     import fitz
                     doc = fitz.open(stream=resume_file.read(), filetype="pdf")
-                    resume_text = "\n".join(p.get_text() for p in doc)
+                    raw_resume = "\n".join(p.get_text() for p in doc)
                 except Exception:
-                    resume_text = f"[Could not parse PDF: {resume_file.name}]"
+                    raw_resume = f"[Could not parse PDF: {resume_file.name}]"
 
-                result = asyncio.run(_session_start(jd_text, resume_text, candidate_id))
+                # ── Guardrail: sanitize resume text ───────────────────────────
+                resume_clean, resume_warns = _sanitize(raw_resume, "resume")
+                for w in resume_warns:
+                    st.warning(f"Resume: {w}")
+
+                result = asyncio.run(_session_start(jd_clean, resume_clean, candidate_id.strip()))
 
             st.session_state.update({
                 "session_id":    result["session_id"],
                 "candidate_id":  candidate_id.strip(),
-                "jd_text":       jd_text,
-                "resume_text":   resume_text,
+                "jd_text":       jd_clean,
+                "resume_text":   resume_clean,
                 "questions":     result["questions"],
                 "prior_context": result.get("prior_context"),
                 "messages":      [],
                 "qa_pairs":      [],
                 "interview_ended": False,
                 "report":        None,
+                "_pending_voice_answer": None,
+                "_voice_transcript_preview": None,
             })
             st.session_state["page"] = "interview"
             st.rerun()
@@ -397,6 +421,20 @@ def _page_upload():
 def _page_interview():
     _header("interview")
 
+    # Guard: session state eviction can leave page="interview" with no active session
+    if not st.session_state.get("candidate_id") or not st.session_state.get("session_id"):
+        st.warning("Session expired. Please start a new interview.")
+        if st.button("← Back to start"):
+            st.session_state["page"] = "upload"
+            st.rerun()
+        return
+
+    # Consume pending voice answer set by the Submit Voice button on the previous rerun
+    pending_voice = st.session_state.pop("_pending_voice_answer", None)
+
+    cid = st.session_state["candidate_id"]
+    sid = st.session_state["session_id"]
+
     col_chat, col_side = st.columns([2.2, 1], gap="large")
 
     with col_chat:
@@ -404,10 +442,10 @@ def _page_interview():
         <div style="margin-bottom:1.4rem;">
             <span style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
                          color:#334155;letter-spacing:0.1em;text-transform:uppercase;">
-                Session · {st.session_state['session_id']}
+                Session · {sid}
             </span>
             <h2 style="font-size:1.45rem;color:#e2e8f0;margin:0.2rem 0 0;font-weight:500;">
-                {st.session_state['candidate_id']}
+                {cid}
             </h2>
         </div>
         """, unsafe_allow_html=True)
@@ -432,8 +470,20 @@ def _page_interview():
 
         # Render existing messages
         for msg in st.session_state["messages"]:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+            role = msg.get("role", "assistant")
+            if role == "system":
+                # Display condensed summary as a subtle banner
+                st.markdown(f"""
+                <div style="border:1px solid rgba(255,255,255,0.06);border-radius:7px;
+                            padding:0.55rem 0.9rem;margin-bottom:0.5rem;
+                            background:rgba(255,255,255,0.015);">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:0.62rem;
+                                 color:#334155;">◈ {msg['content']}</span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                with st.chat_message(role):
+                    st.markdown(msg["content"])
 
         # Seed first question if fresh session
         if not st.session_state["messages"] and st.session_state["questions"]:
@@ -453,56 +503,82 @@ def _page_interview():
             </div>
             """, unsafe_allow_html=True)
         else:
-            if answer := st.chat_input("Type your answer…"):
-                st.session_state["messages"].append({"role": "user", "content": answer})
-                with st.chat_message("user"):
-                    st.markdown(answer)
+            # Text input always rendered so Streamlit can track it
+            text_answer = st.chat_input("Type your answer…")
+            # Voice answer from prior rerun takes precedence; fall back to text
+            # Use .get() — only consume (pop) voice state after successful processing
+            answer_raw = pending_voice or (text_answer if text_answer else None)
 
-                answered_count = sum(1 for m in st.session_state["messages"] if m["role"] == "user")
-                total_q = len(st.session_state["questions"])
+            if answer_raw:
+                # ── Guardrail: sanitize answer ─────────────────────────────────
+                answer, sec_warns = _sanitize(answer_raw, "answer")
+                for w in sec_warns:
+                    st.warning(f"Security: {w}")
 
-                current_q = st.session_state["questions"][answered_count - 1]
-
-                if answered_count >= total_q:
-                    closing = (
-                        "That covers everything I wanted to explore today. "
-                        "Thank you — your responses give us a strong signal. "
-                        "Click **Generate Report** in the sidebar to see the analysis."
-                    )
-                    with st.chat_message("assistant"):
-                        st.markdown(closing)
-                    st.session_state["messages"].append({"role": "assistant", "content": closing})
-                    st.session_state["interview_ended"] = True
+                if not answer:
+                    # Sanitize stripped everything — restore voice state so user can retry
+                    if pending_voice:
+                        st.session_state["_pending_voice_answer"] = pending_voice
+                    st.error("Answer was empty after sanitization — please rephrase.")
                 else:
-                    next_q = st.session_state["questions"][answered_count]
-                    with st.chat_message("assistant"):
-                        streamed = st.write_stream(
-                            _stream_response(dict(st.session_state), answer, answered_count - 1)
-                        )
-                        follow = f"\n\n---\n\n**{next_q}**"
-                        st.markdown(follow)
-                    st.session_state["messages"].append(
-                        {"role": "assistant", "content": streamed + follow}
-                    )
+                    st.session_state["messages"].append({"role": "user", "content": answer})
+                    with st.chat_message("user"):
+                        st.markdown(answer)
 
-                # remember() — store Q&A in Cognee after every turn
-                asyncio.run(_interviewer.remember_turn(
-                    candidate_id=st.session_state["candidate_id"],
-                    session_id=st.session_state["session_id"],
-                    question=current_q,
-                    answer=answer,
-                ))
-                st.session_state["qa_pairs"].append(
-                    {"question": current_q, "answer": answer}
-                )
+                    # Use qa_pairs length — immune to message list compression by map-reduce
+                    answered_count = len(st.session_state["qa_pairs"]) + 1
+                    total_q   = len(st.session_state["questions"])
+                    current_q = st.session_state["questions"][answered_count - 1]
+
+                    if answered_count >= total_q:
+                        closing = (
+                            "That covers everything I wanted to explore today. "
+                            "Thank you — your responses give us a strong signal. "
+                            "Click **Generate Report** in the sidebar to see the analysis."
+                        )
+                        with st.chat_message("assistant"):
+                            st.markdown(closing)
+                        st.session_state["messages"].append(
+                            {"role": "assistant", "content": closing}
+                        )
+                        st.session_state["interview_ended"] = True
+                    else:
+                        next_q = st.session_state["questions"][answered_count]
+                        with st.chat_message("assistant"):
+                            streamed = st.write_stream(
+                                _stream_response(dict(st.session_state), answer, answered_count - 1)
+                            )
+                            follow = f"\n\n---\n\n**{next_q}**"
+                            st.markdown(follow)
+                        st.session_state["messages"].append(
+                            {"role": "assistant", "content": streamed + follow}
+                        )
+
+                    st.session_state["qa_pairs"].append(
+                        {"question": current_q, "answer": answer}
+                    )
+                    # remember() — store Q&A in Cognee after every turn
+                    asyncio.run(_interviewer.remember_turn(
+                        candidate_id=cid,
+                        session_id=sid,
+                        question=current_q,
+                        answer=answer,
+                    ))
+                    # Persist chat history; run map-reduce after write so it never
+                    # corrupts answered_count — next render shows the condensed view.
+                    condensed = _memory.maybe_summarize(st.session_state["messages"])
+                    if condensed is not st.session_state["messages"]:
+                        st.session_state["messages"] = condensed
+                    _memory.save_chat_history(cid, sid, st.session_state["messages"])
 
     # ── Sidebar panel ──────────────────────────────────────────────────────────
     with col_side:
         st.markdown("<div style='height:4rem'></div>", unsafe_allow_html=True)
 
-        answered = sum(1 for m in st.session_state["messages"] if m["role"] == "user")
+        answered = len(st.session_state["qa_pairs"])
         total_q  = len(st.session_state["questions"])
 
+        # Progress card
         st.markdown(f"""
         <div style="border:1px solid rgba(255,255,255,0.07);border-radius:10px;
                     padding:1.3rem;background:rgba(255,255,255,0.02);">
@@ -522,7 +598,57 @@ def _page_interview():
 
         st.markdown("<div style='height:0.75rem'></div>", unsafe_allow_html=True)
 
-        # Question checklist
+        # ── Voice input ────────────────────────────────────────────────────────
+        st.markdown("""
+        <div style="border:1px solid rgba(0,212,255,0.18);border-radius:10px;
+                    padding:1.1rem 1.1rem 0.6rem;background:rgba(0,212,255,0.02);
+                    margin-bottom:0.75rem;">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:0.65rem;
+                         color:#00d4ff;text-transform:uppercase;letter-spacing:0.12em;">
+                ◈ Voice Input
+            </span>
+        """, unsafe_allow_html=True)
+
+        if not st.session_state.get("interview_ended"):
+            try:
+                audio_data = st.audio_input("Record your answer", key="voice_recorder")
+                if audio_data is not None:
+                    col_tr, col_cl = st.columns(2)
+                    with col_tr:
+                        if st.button("Transcribe", use_container_width=True, key="btn_transcribe"):
+                            with st.spinner("Whisper…"):
+                                transcript = _transcribe(audio_data.read(), "answer.webm")
+                            if transcript:
+                                st.session_state["_voice_transcript_preview"] = transcript
+                            else:
+                                st.error("No speech detected. Try again or type your answer below.")
+                    with col_cl:
+                        if st.button("Clear", use_container_width=True, key="btn_vclr"):
+                            st.session_state.pop("_voice_transcript_preview", None)
+                            st.rerun()
+            except AttributeError:
+                st.caption("Voice input requires Streamlit 1.40+")
+
+            preview = st.session_state.get("_voice_transcript_preview")
+            if preview:
+                st.markdown(f"""
+                <div style="border:1px solid rgba(0,212,255,0.2);border-radius:7px;
+                            padding:0.65rem 0.8rem;background:rgba(0,212,255,0.04);margin:0.5rem 0;">
+                    <span style="font-size:0.74rem;color:#64748b;font-style:italic;">
+                        &ldquo;{preview[:200]}{'…' if len(preview) > 200 else ''}&rdquo;
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("Submit Voice Answer", use_container_width=True, key="btn_vsubmit"):
+                    st.session_state["_pending_voice_answer"] = st.session_state.pop(
+                        "_voice_transcript_preview"
+                    )
+                    st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.75rem'></div>", unsafe_allow_html=True)
+
+        # ── Question checklist ─────────────────────────────────────────────────
         st.markdown("""
         <div style="border:1px solid rgba(255,255,255,0.07);border-radius:10px;
                     padding:1.3rem;background:rgba(255,255,255,0.02);">
@@ -533,9 +659,9 @@ def _page_interview():
         """, unsafe_allow_html=True)
 
         for i, q in enumerate(st.session_state["questions"]):
-            done   = i < answered
-            color  = "#10b981" if done else "#1e293b"
-            symbol = "✓" if done else f"0{i+1}"
+            done        = i < answered
+            color       = "#10b981" if done else "#1e293b"
+            symbol      = "✓" if done else f"0{i+1}"
             label_color = "#64748b" if done else "#2d3748"
             st.markdown(f"""
             <div style="display:flex;gap:0.55rem;align-items:flex-start;margin-top:0.6rem;">
@@ -548,8 +674,34 @@ def _page_interview():
             """, unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.75rem'></div>", unsafe_allow_html=True)
 
-        st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+        # ── Candidate profile (cross-session memory) ───────────────────────────
+        # Cache in session_state — only reload when page first enters interview
+        if "_profile_cache" not in st.session_state:
+            st.session_state["_profile_cache"] = _memory.get_candidate_profile(cid)
+        profile = st.session_state["_profile_cache"]
+        if profile["session_count"] > 1:
+            st.markdown(f"""
+            <div style="border:1px solid rgba(124,58,237,0.28);border-radius:10px;
+                        padding:1.1rem;background:rgba(124,58,237,0.04);margin-bottom:0.75rem;">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:0.65rem;
+                             color:#7c3aed;text-transform:uppercase;letter-spacing:0.12em;">
+                    ◈ Profile · {profile['session_count']} sessions
+                </span>
+            """, unsafe_allow_html=True)
+            for skill, avg in profile["avg_scores"].items():
+                bar_color = "#10b981" if avg >= 4 else "#f59e0b" if avg >= 3 else "#ef4444"
+                st.markdown(f"""
+                <div style="display:flex;justify-content:space-between;margin-top:0.45rem;">
+                    <span style="font-size:0.73rem;color:#64748b;">{skill}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:0.73rem;
+                                 color:{bar_color};">{avg}/5 avg</span>
+                </div>
+                """, unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<div style='height:0.75rem'></div>", unsafe_allow_html=True)
 
         if st.button("Generate Report  →", use_container_width=True, disabled=answered == 0):
             with st.spinner("Running analysis and building memory graph…"):
@@ -695,6 +847,7 @@ def _page_report():
         if st.button("← New Interview"):
             for k, v in _DEFAULTS.items():
                 st.session_state[k] = v
+            st.session_state.pop("_profile_cache", None)
             st.rerun()
 
     with col_forget:
@@ -705,6 +858,7 @@ def _page_report():
             time.sleep(1.2)
             for k, v in _DEFAULTS.items():
                 st.session_state[k] = v
+            st.session_state.pop("_profile_cache", None)
             st.rerun()
 
 
