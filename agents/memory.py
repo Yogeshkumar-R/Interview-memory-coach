@@ -223,6 +223,108 @@ async def memify_session(session_id: str, candidate_id: str, report: dict):
     _save(store)
 
 
+# ── Token estimation + map-reduce summarization ────────────────────────────────
+
+def _token_estimate(messages: list) -> int:
+    """Rough estimate: 1 token ≈ 4 chars."""
+    return sum(len(m.get("content", "")) for m in messages) // 4
+
+
+def maybe_summarize(messages: list, threshold_tokens: int = 2500) -> list:
+    """
+    Map-reduce: when conversation exceeds threshold, summarise all but the last
+    4 messages into a single system summary. Sync — safe to call from Streamlit.
+    """
+    if _token_estimate(messages) < threshold_tokens or len(messages) <= 6:
+        return messages
+
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    non_system  = [m for m in messages if m.get("role") != "system"]
+    to_summarize = non_system[:-4]
+    keep         = non_system[-4:]
+
+    if not to_summarize:
+        return messages
+
+    from agents import base
+    transcript = "\n".join(
+        f"{m['role'].upper()}: {m['content'][:600]}" for m in to_summarize
+    )
+    try:
+        summary_text = base.chat(
+            messages=[{"role": "user", "content":
+                "Summarize this interview conversation in 3-5 sentences. "
+                "Preserve key technical signals, candidate performance, and skill gaps:\n\n"
+                + transcript}],
+            system="You summarize interview transcripts. Return only the summary, no preamble.",
+            max_tokens=250,
+        )
+    except Exception:
+        summary_text = f"[{len(to_summarize)} earlier messages condensed]"
+
+    summary_msg = {"role": "system", "content": f"[Earlier conversation summary]: {summary_text}"}
+    return system_msgs + [summary_msg] + keep
+
+
+# ── Per-session chat history + candidate profile ────────────────────────────────
+
+def save_chat_history(candidate_id: str, session_id: str, messages: list) -> None:
+    """Persist Streamlit chat display messages to the local JSON sidecar."""
+    store = _load()
+    store.setdefault(candidate_id, {"sessions": []})
+    for s in store[candidate_id]["sessions"]:
+        if s.get("session_id") == session_id:
+            s["chat_history"] = messages
+            _save(store)
+            return
+    store[candidate_id]["sessions"].append({
+        "session_id": session_id,
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "chat_history": messages,
+        "qa_pairs": [],
+    })
+    _save(store)
+
+
+def load_chat_history(candidate_id: str, session_id: str) -> list:
+    """Retrieve persisted chat messages for a specific session."""
+    store = _load()
+    for s in store.get(candidate_id, {}).get("sessions", []):
+        if s.get("session_id") == session_id:
+            return s.get("chat_history", [])
+    return []
+
+
+def get_candidate_profile(candidate_id: str) -> dict:
+    """Aggregate profile across all sessions: session count, average skill scores."""
+    store = _load()
+    data = store.get(candidate_id, {})
+    sessions = data.get("sessions", [])
+
+    skill_totals: dict = {}
+    skill_counts: dict = {}
+    for s in sessions:
+        for score in s.get("report", {}).get("scores", []):
+            skill = score.get("skill", "")
+            try:
+                val = float(score.get("value", 0))
+            except (TypeError, ValueError):
+                continue  # skip malformed LLM output like "N/A" or "4/5"
+            skill_totals[skill] = skill_totals.get(skill, 0.0) + val
+            skill_counts[skill] = skill_counts.get(skill, 0) + 1
+
+    avg_scores = {
+        k: round(skill_totals[k] / skill_counts[k], 1)
+        for k in skill_totals
+    }
+    return {
+        "candidate_id":  candidate_id,
+        "session_count": len(sessions),
+        "sessions":      sessions,
+        "avg_scores":    avg_scores,
+    }
+
+
 # ── forget ─────────────────────────────────────────────────────────────────────
 
 async def forget_candidate(candidate_id: str):
