@@ -75,29 +75,21 @@ Interview-memory-coach/
 
 ## Architecture
 
-Three layers: **FastAPI + vanilla JS UI → Groq LLM agents → Cognee memory**
+```mermaid
+graph TD
+    Browser["Browser SPA\nIntake · Interview · Report · Canvas graph"]
+    FastAPI["FastAPI — server.py\n/api/start · /api/answer SSE · /api/report\n/api/transcribe · /api/analyze · /api/candidates"]
+    Agents["Agent Layer\nintake · interviewer · analysis\nmemory · voice · guardrails"]
+    Cognee["Cognee Memory APIs\ncognify() · remember() · recall() · memify() · forget()"]
+    Groq["Groq API\nllama-3.3-70b-versatile — agents\nllama-4-scout-17b-16e-instruct — Cognee graph\nwhisper-large-v3 — STT"]
+    Storage["Persistent Storage\nNetworkX + LanceDB → ~/.cognee/\nJSON sidecar → ~/.cognee_coach/"]
 
-```
-Browser (index.html)
-  │  SSE streaming + REST JSON
-  ▼
-server.py (FastAPI)
-  ├── /api/start        → intake.run()       → cognify()
-  ├── /api/answer       → interviewer        → remember() per turn
-  ├── /api/report       → analysis.run()     → memify()
-  ├── /api/transcribe   → voice.transcribe_audio()
-  ├── /api/analyze      → LLM fit analysis   (JD ↔ resume match score)
-  ├── /api/parse-document → PyMuPDF text extraction
-  ├── /api/candidates   → JSON sidecar list
-  ├── /api/candidate/{id}/memory → canvas graph data
-  └── /api/candidate/{id} DELETE → forget()
-
-agents/memory.py
-  ├── cognify()    — entity graph from JD + resume
-  ├── remember()   — Q&A pair stored per turn
-  ├── recall()     — prior session context at start
-  ├── memify()     — role-level quality graph update
-  └── forget()     — GDPR wipe (Cognee + JSON sidecar)
+    Browser -->|"REST + SSE streaming"| FastAPI
+    FastAPI -->|"agent function calls"| Agents
+    Agents -->|"5 Cognee lifecycle APIs"| Cognee
+    Agents -->|"direct Groq SDK"| Groq
+    Cognee -->|"LiteLLM groq/ prefix"| Groq
+    Cognee -->|"NetworkX · LanceDB"| Storage
 ```
 
 **LLM:** `llama-3.3-70b-versatile` via Groq for agents · `llama-4-scout-17b-16e-instruct` via Groq for Cognee's internal graph extraction (see ADR-003)  
