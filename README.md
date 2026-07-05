@@ -30,15 +30,17 @@ Upload JD + Resume
 🎬 Watch the Project Walkthrough
 What's covered in the video:
 
-0:00 — Architecture & Hackathon Overview
+Video Link : https://youtu.be/wDEWcbQSrMI?si=buKZGeKTMJT7nlDq
 
-1:15 — Uploading JDs/Resumes & cognify() Graph Building
+ Hackathon Overview & Problem Statement
 
-2:30 — Live Streaming Interview & Real-Time remember() Hooks
+ Uploading JDs/Resumes & cognify() Graph Building
 
-4:15 — Cross-Session Persistence: Deep Dive into recall()
+ Live Streaming Interview & Real-Time remember() Hooks
 
-5:45 — Interactive Canvas Memory Graph & The GDPR forget() Wipe
+ Cross-Session Persistence: Deep Dive into recall()
+
+ Interactive Canvas Memory Graph & The GDPR forget() Wipe
 
 ---
 
