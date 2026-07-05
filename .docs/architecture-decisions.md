@@ -1,356 +1,205 @@
-# Architecture Decision Records — Interview Memory Coach (UC1)
+# Architecture Decision Records — Interview Memory Coach
 
-**Hackathon:** WeMakeDevs × Cognee · Jun 29 – Jul 5 2026
-**Team size:** 4 · **Available time:** ~25 hrs total
+**Hackathon:** WeMakeDevs × Cognee · Jun 29–Jul 5 2026  
+**Submitted:** Jul 5 2026  
+**Built by:** Yogesh Kumar (solo)
 
 ---
 
 ## ADR index
 
 | # | Title | Status |
-|---|---|---|
-| ADR-001 | Agent orchestration framework | Proposed |
-| ADR-002 | Cognee storage backend | Proposed |
-| ADR-003 | UI framework | Proposed |
-| ADR-004 | Cross-session memory strategy | Proposed |
+|---|-------|--------|
+| ADR-001 | Agent orchestration framework | Accepted |
+| ADR-002 | Cognee storage backend | Accepted |
+| ADR-003 | UI framework | Superseded — see amendment |
+| ADR-004 | Cross-session memory strategy | Accepted |
+| ADR-005 | Cognee internal LLM model | Accepted |
 
 ---
 
 ## ADR-001: Agent orchestration framework
 
-**Status:** Proposed
-**Date:** 2026-06-28
-**Deciders:** Full team (affects everyone's day-to-day coding)
-
-### Context
-
-Three agents need to be orchestrated — Intake, Interviewer, and Analysis — each calling the Anthropic API, reading/writing Cognee, and passing state between them. The choice here determines how fast the team can iterate, how easy debugging is, and how much boilerplate eats into the available 25 hours.
+**Status:** Accepted  
+**Date proposed:** 2026-06-28 · **Date implemented:** 2026-07-01
 
 ### Decision
 
-Use the **raw Anthropic Python SDK** with thin wrapper functions, not a framework like LangChain or LlamaIndex.
+Use the **raw Groq SDK** with thin wrapper functions in `agents/base.py`. No LangChain, no LlamaIndex.
+
+> **Amendment from proposal:** The original proposal specified the Anthropic SDK. The team switched to Groq for cost and speed — Groq's `llama-3.3-70b-versatile` is free-tier and runs at ~300 tok/s, making streaming feel instant. Cognee is separately configured to use Groq via LiteLLM's `groq/` prefix.
 
 ### Options considered
 
-#### Option A: Raw Anthropic SDK + custom wrappers
+| Option | Verdict |
+|--------|---------|
+| Raw SDK (Groq/Anthropic) | **Chosen** — transparent, debuggable, no abstraction fighting Cognee |
+| LangChain | Rejected — no first-class Cognee memory adapter; version conflicts |
+| LlamaIndex | Rejected — overkill; duplicates Cognee's RAG layer |
 
-| Dimension | Assessment |
-|---|---|
-| Complexity | Low |
-| Setup time | ~30 min |
-| Debugging | Excellent — plain Python tracebacks |
-| Team familiarity | High (it's just API calls) |
-| Cognee integration | Manual but transparent |
+### Consequences (actual)
 
-**Pros:**
-- No abstraction layer hiding what's happening
-- Cognee calls sit right next to Claude calls in the same function
-- Zero dependency conflicts
-- Easy to demo step-by-step with full visibility
-
-**Cons:**
-- More boilerplate: retry logic, streaming, message history management must be written manually
-- Each agent is a plain function that needs to be wired together explicitly
-
-#### Option B: LangChain
-
-| Dimension | Assessment |
-|---|---|
-| Complexity | Medium–High |
-| Setup time | 2–3 hrs to get chains + memory adapters right |
-| Debugging | Poor — errors buried in abstraction layers |
-| Team familiarity | Variable |
-| Cognee integration | Requires a custom `BaseMemory` adapter |
-
-**Pros:**
-- Built-in agent loop
-- Tool calling abstractions
-- Many tutorials online
-
-**Cons:**
-- Cognee has no first-class LangChain memory adapter — writing one is a rabbit hole
-- LangChain's `AgentExecutor` fights with Cognee's async API
-- Version conflicts between `langchain`, `langchain-anthropic`, and `cognee` are common and time-consuming
-
-#### Option C: LlamaIndex
-
-| Dimension | Assessment |
-|---|---|
-| Complexity | High |
-| Setup time | 3–4 hrs |
-| Debugging | Poor |
-| Team familiarity | Low (typically) |
-| Cognee integration | No native support |
-
-**Pros:**
-- Strong RAG primitives
-
-**Cons:**
-- Overkill — Cognee is already the RAG layer. Two overlapping memory systems confuse both the architecture and the judges.
-
-### Trade-off analysis
-
-The core tension is **productivity vs. features**. LangChain provides an agent loop out of the box but the first day would be spent fighting its Cognee integration rather than building the actual product. The raw SDK gives nothing for free, but everything written is fully owned, debuggable, and demo-friendly.
-
-For a hackathon where the demo is everything and 25 hours is the budget, **transparent and debuggable beats feature-rich and opaque**.
-
-### Consequences
-
-- Each agent is a Python `async def` function accepting a `messages: list` parameter
-- State is passed between agents as plain dicts — agreed schema on Day 1
-- A ~20-line retry wrapper for rate limit errors will need to be hand-written in `agents/base.py`
-- Streaming to the Streamlit UI uses `anthropic.messages.stream()` + `st.write_stream()`
-
-### Action items
-
-- [ ] Person 2 creates `agents/base.py` with shared client, retry wrapper, and streaming helper on Day 1
-- [ ] Full team agrees on the inter-agent state dict schema before anyone writes an agent
+- `agents/base.py` holds a shared `groq.Groq()` client and a `chat()` wrapper that handles retries
+- `agents/interviewer.py` exposes a sync `stream_response()` generator consumed by the SSE endpoint
+- Inter-agent state is a plain Python dict — schema defined in `CLAUDE.md`
+- Streaming is SSE (`StreamingResponse` + `asyncio.sleep(0)` flush trick), not `st.write_stream()`
 
 ---
 
 ## ADR-002: Cognee storage backend
 
-**Status:** Proposed
-**Date:** 2026-06-28
-**Deciders:** Person 1 (Cognee integration lead)
-
-### Context
-
-Cognee supports multiple graph and vector backends. The choice affects setup time, demo reliability, and how inspectable the memory graph is during the demo. Showing a populated graph to judges is a strong visual signal.
+**Status:** Accepted  
+**Date proposed:** 2026-06-28 · **Date confirmed:** 2026-07-01
 
 ### Decision
 
-Use **NetworkX** (graph) + **LanceDB** (vector) — Cognee's defaults — for the hackathon. Do not swap to Neo4j or Weaviate unless there is a specific demo need and time allows.
+Use **NetworkX** (graph) + **LanceDB** (vector) — Cognee's defaults. Neo4j was not attempted.
 
-### Options considered
+The planned Day 5 Neo4j time-box was dropped. The pyvis graph visualisation was replaced by a **canvas-drawn interactive graph** in the UI (see ADR-003 amendment). No iframe, no pyvis dependency — the graph renderer is ~200 lines of vanilla JS that draws nodes with glow effects and supports click-to-inspect.
 
-#### Option A: NetworkX + LanceDB (Cognee defaults)
+### Graph data flow (actual)
 
-| Dimension | Assessment |
-|---|---|
-| Setup time | Zero — works out of the box |
-| Persistence | File-backed (LanceDB on disk, NetworkX pickled to `~/.cognee/`) |
-| Query capability | Sufficient for hackathon queries |
-| Demo visibility | Low natively; exportable to pyvis for visualisation |
-| Production readiness | No |
+```
+cognify()   → Cognee builds entity graph in NetworkX/LanceDB
+              (stored at ~/.cognee/ inside the venv)
+remember()  → Q&A pairs added to graph per turn (fire-and-forget)
+recall()    → semantic query against LanceDB vectors
+memify()    → role-level quality metadata added to graph
 
-**Pros:**
-- No Docker, no credentials, no connection strings
-- `cognee.cognify()` works immediately after `pip install cognee`
-- LanceDB persists automatically
+JSON sidecar (~/.cognee_coach/sessions.json)
+            → structured index for deterministic lookups
+              (candidate list, session history, report scores)
+              Cognee is the semantic layer; sidecar is the structured layer
+```
 
-**Cons:**
-- Graph is not browsable via a GUI without extra work
-- NetworkX doesn't scale past ~100K nodes (irrelevant for this project)
+### Consequences (actual)
 
-#### Option B: Neo4j + Weaviate
-
-| Dimension | Assessment |
-|---|---|
-| Setup time | 2–4 hrs (Docker Compose, credentials, Cognee config) |
-| Persistence | Production-grade |
-| Query capability | Cypher queries, Weaviate hybrid search |
-| Demo visibility | Neo4j Browser is excellent for live graph visualisation |
-| Production readiness | Yes |
-
-**Pros:**
-- Neo4j Browser running live during a demo is genuinely impressive — the candidate entity graph populating in real time is a strong judge moment
-- Judges who know graph databases will recognise it immediately
-
-**Cons:**
-- If Docker fails mid-demo, the entire product is down
-- 2–4 hrs setup time that should be spent on agent logic
-- Cognee's Neo4j adapter has had occasional connection pool issues
-
-### Trade-off analysis
-
-Neo4j Browser is tempting purely for demo optics. The mitigation is a hybrid approach: use defaults throughout development, then on Day 6 attempt the Neo4j swap in a separate branch with a strict 2-hour time-box. If it breaks, revert to defaults. Use a pyvis HTML graph export for all demo visualisations regardless of backend — 10 lines of code, embeds in Streamlit via `st.components.v1.html()`.
-
-### Consequences
-
-- Default path: zero infra setup, demo runs on any laptop
-- Neo4j path: add `COGNEE_GRAPH_BACKEND=neo4j` to `.env` and test on Day 6 in a branch
-- pyvis graph export is implemented regardless of backend choice
-
-### Action items
-
-- [ ] Person 1 confirms LanceDB default works with `await cognee.cognify(["test"])` on Day 1
-- [ ] Day 6 stretch: attempt Neo4j swap in a separate branch, 2-hour time-box maximum
-- [ ] Add pyvis graph visualisation embedded in the Streamlit report page regardless of backend
+- Zero infra — no Docker, no credentials beyond `GROQ_API_KEY`
+- `GET /api/candidate/{id}/memory` builds canvas graph data from the JSON sidecar
+- pyvis dependency removed from `requirements.txt`
+- The old `/api/graph/{session_id}` pyvis endpoint was removed from `server.py`
 
 ---
 
 ## ADR-003: UI framework
 
-**Status:** Proposed
-**Date:** 2026-06-28
-**Deciders:** Person 4 (UI lead)
+**Status:** Superseded — Streamlit replaced by FastAPI + vanilla JS
 
-### Context
+**Date proposed:** 2026-06-28 · **Date superseded:** 2026-07-03
 
-The UI must: (a) let a recruiter upload a JD and resume, (b) run a live chat interview session with streaming responses, (c) display a structured post-interview report. It needs to be fully built in roughly 6–8 hours across Days 4–5.
+### Original decision
 
-### Decision
+Streamlit — `st.chat_message`, `st.chat_input`, `st.write_stream`.
 
-Use **Streamlit** with `st.chat_message`, `st.chat_input`, and `st.write_stream`.
+### Why it was superseded
 
-### Options considered
+Streamlit's execution model re-runs the entire script on every interaction. This caused two concrete problems:
 
-#### Option A: Streamlit
+1. **SSE streaming friction** — Cognee's async calls inside an SSE generator conflicted with Streamlit's synchronous re-run model. `asyncio.run()` nested inside Streamlit callbacks produced event loop conflicts that were difficult to debug.
+2. **UI design ceiling** — The glassmorphism design (backdrop-filter blur, canvas graph, custom sidebar stepper) required CSS that Streamlit's component system couldn't support cleanly. Injecting raw HTML/CSS via `st.markdown(unsafe_allow_html=True)` became the entire UI layer — at that point Streamlit was providing no value.
 
-| Dimension | Assessment |
-|---|---|
-| Setup time | 15 min |
-| Streaming support | Native (`st.write_stream`) |
-| File upload | Native (`st.file_uploader`) |
-| Chat UI | Native (`st.chat_message`, `st.chat_input`) |
-| Deployability | `streamlit run app.py` — zero config |
+### Replacement decision
 
-**Pros:**
-- Chat interface looks professional out of the box
-- Streaming LLM responses work natively since v1.28
-- File upload with PDF support is two lines of code
-- Entire UI can be a single `app.py` file
-- Three-page flow maps cleanly to `st.session_state["page"]`
+**FastAPI** backend + **vanilla JS single-page app** (`static/index.html`).
 
-**Cons:**
-- Single-threaded — concurrent users block each other (irrelevant for a demo)
-- Limited layout control compared to React
-- No real-time push from backend — requires `st.rerun()` polling
+| Dimension | Streamlit | FastAPI + vanilla JS |
+|-----------|-----------|----------------------|
+| SSE streaming | Workaround via asyncio.run | Native StreamingResponse |
+| CSS control | Inject-only, fights Streamlit | Full control |
+| Canvas graph | Not possible | Native |
+| Voice input | st.audio_input (1.40+) | MediaRecorder API |
+| Deployment | `streamlit run app.py` | `uvicorn server:app` |
+| Async agents | Event loop conflicts | Native async/await |
 
-#### Option B: FastAPI + React / Next.js
+### Consequences (actual)
 
-| Dimension | Assessment |
-|---|---|
-| Setup time | 4–6 hrs minimum |
-| Streaming support | SSE or WebSocket (must be implemented manually) |
-| File upload | Manual multipart handling |
-| Chat UI | Must be built from scratch or via a library |
-| Deployability | Two separate processes, CORS configuration required |
-
-**Pros:**
-- Production-quality, fully customisable
-- Impressive to judges who examine the code
-
-**Cons:**
-- 4–6 hr setup consumes almost the entire UI budget
-- Streaming requires Server-Sent Events or WebSockets — non-trivial to wire correctly
-- Over-engineered for a hackathon demo
-
-#### Option C: Gradio
-
-| Dimension | Assessment |
-|---|---|
-| Setup time | 10 min |
-| Streaming support | Native |
-| Chat UI | `gr.ChatInterface` — works well |
-| Deployability | Single command |
-
-**Pros:**
-- Even simpler than Streamlit for pure chat interfaces
-
-**Cons:**
-- Less control over multi-page layout
-- Streamlit's multi-page support is better for the upload → interview → report three-screen flow
-
-### Trade-off analysis
-
-Streamlit wins cleanly. The three-screen flow maps directly to Streamlit's `st.session_state` navigation pattern. Built-in chat components mean Person 4 can have a working prototype in 2 hours and use the remaining time on the report layout and pyvis integration.
-
-### Consequences
-
-- App has three logical pages managed via `st.session_state["page"]`: `"upload"`, `"interview"`, `"report"`
-- Streaming: `st.write_stream(client.messages.stream(...))` handles interview turns
-- Report page renders the analysis agent output using `st.metric`, `st.progress`, and `st.dataframe`
-- pyvis graph HTML embedded via `st.components.v1.html(graph_html, height=400)`
-- `forget()` button on the report page calls `cognee.forget(candidate_id)` — demonstrates full memory lifecycle
-
-### Action items
-
-- [ ] Person 4 scaffolds three-page Streamlit app with `st.session_state` navigation on Day 2 (target: 2 hrs)
-- [ ] File upload → calls `session_start()` function (even if mocked) by end of Day 2
-- [ ] Streaming interview turn working end-to-end by end of Day 4
+- `app.py` (Streamlit) deleted from the repo
+- `server.py` is the FastAPI backend; `static/index.html` is the entire UI (~550 lines, inline CSS + JS)
+- SSE streaming with `asyncio.sleep(0)` flush after each chunk
+- MediaRecorder → Blob → `POST /api/transcribe` → Groq Whisper pipeline for voice input
+- Typewriter animation (`setInterval` queue drain at 3 chars/20 ms) for streamed text
 
 ---
 
 ## ADR-004: Cross-session memory strategy
 
-**Status:** Proposed
-**Date:** 2026-06-28
-**Deciders:** Full team — this is a product decision, not just a tech decision
-
-### Context
-
-The hackathon theme is "give your AI a memory." The project's differentiation is that the Interviewer agent gets smarter across sessions. This ADR defines exactly what "smarter" means, because it determines what is stored, what is retrieved, and what is demonstrated to judges.
-
-Two distinct flavours of cross-session memory are possible and they serve different parts of the demo story.
+**Status:** Accepted — both flavours implemented  
+**Date proposed:** 2026-06-28 · **Date implemented:** 2026-07-02
 
 ### Decision
 
-Implement **both flavours** but prioritise Flavour 1 for the demo. Flavour 2 is a stretch goal for Day 5–6.
+Both Flavour 1 (candidate memory) and Flavour 2 (role memory via `memify()`) are implemented. Flavour 1 is the primary demo story.
 
-### Options considered
+### Flavour 1 — Candidate memory (demo centrepiece)
 
-#### Option A — Flavour 1: Candidate memory (remembering a specific person)
+`recall(candidate_id)` returns prior session context which is injected into the interviewer system prompt. On a returning candidate's second session, the agent surfaces prior scores and skill gaps and avoids repeating answered questions.
 
-The system recalls everything about a candidate across multiple interview rounds. On a second interview, the agent surfaces:
+**Implementation:** `agents/memory.py::recall_prior()` + `agents/interviewer.py` system prompt injection.
 
-> "Last time Alice struggled with system design questions (2/5) but excelled at Python fundamentals (5/5). Probe system design deeper. Do not re-ask questions she already answered well."
+### Flavour 2 — Role memory
 
-`recall(candidate_id="alice_jones")` returns prior scores, gap flags, and unanswered questions.
+`memify()` is called by the analysis agent at session end, writing `QuestionTemplate → performed_well_on → Role` edges. The data accumulates across sessions.
 
-| Dimension | Assessment |
-|---|---|
-| Cognee APIs used | `cognify`, `remember`, `recall`, `forget` |
-| Demo clarity | Very high — judges immediately understand the value |
-| Build effort | Medium — approximately 1 day |
-| Data needed | 1–2 synthetic prior sessions for the demo candidate |
+**Status:** Data is being written correctly. Query-side question ranking using `memify()` data is a stretch goal not yet wired into question generation.
 
-#### Option B — Flavour 2: Role memory (improving question quality over hires)
+### JSON sidecar decision
 
-After interviewing several candidates for the same role, `memify()` builds a graph of which questions best differentiated strong from weak candidates. The next interview for that role uses this institutional knowledge.
+An additional decision not in the original proposal: a JSON sidecar at `~/.cognee_coach/sessions.json` stores the structured session index.
 
-`recall(role="senior_backend_engineer")` returns high-signal question templates with performance metadata.
+**Why:** Cognee's `recall()` is a semantic search — excellent for "what were Alice's weaknesses?" but unreliable for "give me all sessions for Alice ordered by date." The sidecar provides the deterministic structured layer. Cognee provides the semantic layer.
 
-| Dimension | Assessment |
-|---|---|
-| Cognee APIs used | `cognify`, `memify`, `recall` |
-| Demo clarity | Medium — requires explanation |
-| Build effort | Medium–High — synthetic history needed |
-| Data needed | 3–5 synthetic past interviews per role |
+### Consequences (actual)
 
-### Trade-off analysis
-
-Flavour 1 is the more visceral demo moment — showing that the AI "remembered" a specific person is immediately relatable and requires no explanation. Flavour 2 is the more intellectually interesting story (institutional learning) but needs more setup data and more explanation time during the demo.
-
-**Build Flavour 1 first.** It is the core demo and a complete story on its own. Flavour 2 becomes a closing "wow" moment if working, or a "future roadmap" slide if not.
-
-### Consequences
-
-- `seed_memory.py` creates 2–3 synthetic sessions for a returning candidate — essential for reliable demos, takes ~30 min to write
-- `forget(candidate_id)` button in the UI demonstrates the full Cognee lifecycle and signals GDPR awareness — judges notice this
-- Flavour 2 requires a `role_memory` namespace in Cognee — scoped as a Day 5 stretch goal
-- Pre-seeded data must be committed to the repo so any team member can reproduce the demo on a fresh machine
-
-### Action items
-
-- [ ] Person 1 writes `seed_memory.py` by end of Day 2 — this unblocks all integration testing
-- [ ] Person 2 adds `recall()` call at session start and injects returned context into the interviewer system prompt by Day 3
-- [ ] Person 3 adds the `forget(candidate_id)` call to the report view by Day 5
-- [ ] Day 5–6 stretch: Person 1 implements `memify()` role-level graph; Person 2 wires it into question ranking
+- `forget(candidate_id)` wipes both Cognee graph/vectors and the JSON sidecar entry
+- The UI candidate selector reads from `GET /api/candidates` → backed by the JSON sidecar
+- `GET /api/candidate/{id}/memory` builds the canvas graph from sidecar data + Cognee `recall_prior()`
+- Pre-seeded synthetic sessions (`seed_memory.py`) ensure `recall()` returns meaningful context during demo
 
 ---
 
-## ADR dependency order for the sprint
+## ADR-005: Cognee internal LLM model
 
+**Status:** Accepted  
+**Date:** 2026-07-05  
+**Deciders:** Team
+
+### Context
+
+Cognee 1.2.2 uses an LLM internally to extract `KnowledgeGraph` structured objects from text during `cognify()` and `remember()` pipeline runs. The graph extraction prompt is sent via LiteLLM's `groq/` prefix and expects the model to call a `KnowledgeGraph` tool with a schema that requires every node to have four fields: `id`, `type`, `name`, **and `description`**.
+
+Groq validates tool-call responses server-side. If the model omits any required field, Groq returns `tool_use_failed` rather than the (invalid) structured output, and Cognee retries with exponential backoff (8.5 s → 16.8 s → 32.7 s → …). This was first observed in session logs on 2026-07-05.
+
+### Decision history
+
+| Attempt | Model | Result |
+|---------|-------|--------|
+| 1 | `llama-3.3-70b-versatile` | Consistently omits `description` on nodes → Groq rejects tool calls, retry storm |
+| 2 | `llama-3.1-70b-versatile` | Decommissioned — instant failure every attempt, worst outcome (128 s backoff wasted) |
+| 3 ✓ | `meta-llama/llama-4-scout-17b-16e-instruct` | **Accepted** — Llama 4 family, improved tool-call schema compliance |
+
+**Error from attempt 1:**
 ```
-ADR-001 (SDK choice)        ← Agree Day 1 morning — everyone unblocks on this
-         |
-ADR-002 (storage backend)   ← Person 1, Day 1–2
-         |
-ADR-004 (memory strategy)   ← Person 1 + 2, Day 2–3 (seed_memory.py unlocks this)
-         |
-ADR-003 (UI framework)      ← Person 4, Day 2 onward (can mock APIs until Day 4)
+tool call validation failed: parameters for tool KnowledgeGraph did not match schema:
+errors: [/nodes/0: missing properties: 'description', ...]
 ```
 
-The only real Day 1 blocker is confirming Cognee's default stack runs on all team machines and agreeing on the inter-agent state dict schema. Everything else proceeds in parallel after that.
+**Why Llama 4 Scout over alternatives:**
+
+| Model | Reason against |
+|-------|----------------|
+| `llama-3.3-70b-versatile` | Confirmed schema non-compliance — omits `description` |
+| `llama-3.1-70b-versatile` | Decommissioned |
+| `llama-3.1-8b-instant` | Decommissioned (llama-3.1 series) |
+| `gemma2-9b-it` | Good schema compliance but lower reasoning quality for graph extraction |
+| `llama-3.3-70b-specdec` | Same base as attempt 1; same omission behaviour expected |
+| `llama-4-maverick-17b-128e-instruct` | Same family, higher cost, no benefit for this task |
+
+**Fallback:** If `llama-4-scout` is unavailable, use `gemma2-9b-it`.
+
+### Consequences
+
+- Cognee's `cognify()` and `remember()` produce valid `KnowledgeGraph` outputs without server-side rejection
+- Faster inference (~400 tok/s on Groq) due to MoE architecture (17B active params, 16 experts)
+- Our own agent calls (`agents/base.py`) are unaffected — they use `llama-3.3-70b-versatile` directly with text output, no tool-call schema validation
+
+**Mitigation independent of model choice:** `remember_qa()` is called via `asyncio.create_task()` in `server.py` — fire-and-forget. Cognee retry storms never block the SSE `done` event regardless of which model is configured.

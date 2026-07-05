@@ -1,106 +1,108 @@
-# Hangover AI — Where's My Context? — Team Plan
+# Interview Memory Coach — Build Log
 
-**Hackathon:** The Hangover Part AI (WeMakeDevs × Cognee) · Jun 29 – Jul 5 2026
-**Use case:** Interview Memory Coach (UC1)
-**Team:** A, S, N, Y
-**Remaining time:** Jul 1 – Jul 5 (4 build/submit days, today Jun 30 treated as setup-only and excluded)
+**Hackathon:** WeMakeDevs × Cognee · Jun 29–Jul 5 2026  
+**Use case:** UC1 — Interview Memory Coach  
+**Built by:** Yogesh Kumar (solo — team of 4 planned, 1 delivered)
 
-**Judging criteria (confirmed from hackathon site):**
-1. Depth of use of Cognee's memory lifecycle APIs (`cognify`, `remember`, `recall`, `memify`, `forget`) and the hybrid graph-vector layer
-2. Polish / intuitiveness of the actual product experience
+**Judging criteria:**
+1. Depth of Cognee memory lifecycle API usage (`cognify`, `remember`, `recall`, `memify`, `forget`)
+2. Polish / intuitiveness of the product experience
 3. Clarity of demo, README, and submission write-up
 
 ---
 
-## Jul 1 — Core loop wired
+## Day-by-day log
 
-**A (Cognee lead)**
-- Finish `seed_memory.py` — 2–3 synthetic prior interview sessions for a returning candidate
-- Integrate `recall()`, test cross-session retrieval end to end
-- Confirm `cognify()` entity graph (Candidate / Session / QAPair / Score) is stable
+### Jun 29–30 — Setup and planning
 
-**S (Agents)**
-- Build Interviewer agent: dialogue state, question generation
-- Call `remember()` after every Q&A turn
-- Wire `recall()` output into the interviewer's system prompt (candidate context injection)
-
-**N (Analysis)**
-- Build scoring logic: score each answer against JD requirements
-- Flag skill gaps vs. resume claims
-
-**Y (UI)**
-- Wire file upload (JD + resume) to `session/start` (mock backend if needed)
-- Build out the chat UI shell for the interview page
-
-**End of day:** lock the inter-agent state dict schema if not already locked — this blocks everyone.
+- Confirmed Cognee + Groq baseline works locally
+- Defined inter-agent state dict schema
+- Wrote initial `smoke_test.py` to validate Cognee + Groq integration
+- Chose raw Groq SDK over LangChain/LlamaIndex (ADR-001)
+- Scaffolded `agents/` directory with `base.py`, `intake.py`, `interviewer.py`, `analysis.py`, `memory.py`
 
 ---
 
-## Jul 2 — Streaming + analysis
+### Jul 1 — Core Cognee loop
 
-**A**
-- Validate graph integrity after multiple sessions / repeated `cognify()` calls
-- Start `memify()` groundwork for role-level question quality (Flavour 2, stretch)
-
-**S**
-- Add follow-up probe logic, session continuity across turns
-- Finalize streaming via `anthropic.messages.stream()`
-
-**N**
-- Build full Analysis agent: report dict `{ summary, scores[], gaps[], recommendation }`
-- Call `memify()` after session end to update question-quality metadata
-
-**Y**
-- Wire `st.write_stream()` to the interviewer agent for live streaming chat — this is the core demo moment, prioritize it working smoothly over anything else today
+- Implemented `_cognee_config()` in `agents/memory.py` — Groq via LiteLLM's `groq/` prefix, FastEmbed for local embeddings
+- Implemented `cognify()` wrapper in intake agent — ingests JD + resume as a Cognee dataset
+- Implemented `remember_qa()` — stores Q&A pairs per turn
+- Implemented `recall_prior()` — surfaces prior session context at session start
+- Implemented `forget_candidate()` — wipes Cognee graph + local sidecar
+- Added JSON sidecar at `~/.cognee_coach/sessions.json` for reliable structured lookups (Cognee handles semantics; sidecar handles deterministic index)
 
 ---
 
-## Jul 3 — End-to-end + lifecycle demo
+### Jul 2–3 — Agents and initial Streamlit UI
 
-**A**
-- If time allows: `memify()` role graph (Flavour 2). If not, stop touching Cognee internals and lock Flavour 1 (candidate memory) as the demo story.
+- Intake agent: PyMuPDF PDF extraction, question generation from JD↔resume gap analysis
+- Interviewer agent: streaming dialogue, follow-up probe logic, prior context injection into system prompt
+- Analysis agent: post-session scoring, gap analysis, `memify()` call
+- Guardrails: `agents/guardrails.py` — input sanitization, candidate ID validation
+- Voice: `agents/voice.py` — Groq Whisper STT via Groq SDK (no local model download)
+- Initial Streamlit prototype (`app.py`) — three-page navigation, file upload, chat streaming
 
-**S**
-- Full end-to-end test: upload → interview → session end → report
-- Fix breakages found during the run-through
-
-**N**
-- Polish report page output: `st.metric`, `st.progress`, `st.dataframe`
-
-**Y**
-- Embed pyvis graph visualization (`st.components.v1.html`) showing the live memory graph
-- Add `forget(candidate_id)` button — judges specifically reward visible lifecycle completeness (remember/recall/memify/forget), don't skip this
-
-**Note:** Do not attempt a Neo4j swap. ADR-002 already treats it as optional, it costs hours, and the demo-visibility need is already covered by pyvis. Skip it entirely given the compressed timeline.
+**Pivot decision:** Streamlit was producing event loop conflicts with Cognee's async APIs and CSS injection hacks were becoming the entire UI layer. Decided to migrate to FastAPI + vanilla JS (see ADR-003).
 
 ---
 
-## Jul 4 — Polish, demo script, submission prep
+### Jul 3–4 — FastAPI rewrite and glassmorphism UI
 
-**All four**
-- Bug bash: run the full demo flow 3+ times on a clean machine to catch environment/setup issues
-
-**S + Y**
-- Record a backup demo video — mandatory safety net in case the live demo breaks
-
-**A**
-- Write the "how we used Cognee" section of the submission. Be specific: which lifecycle calls (`cognify`, `remember`, `recall`, `memify`, `forget`) do what, and why — this is explicitly scored
-
-**N**
-- Write final README: problem, solution, demo link, architecture diagram
-
----
-
-## Jul 5 — Submit
-
-- Final run-through of the live demo
-- Submit the project form
-- Optional: blog post / social post if going for the swag tracks (Keychron keyboards for best blogs, swag for top social posts)
+- Replaced Streamlit with FastAPI (`server.py`) + single-page app (`static/index.html`)
+- Implemented SSE streaming for answer responses — `asyncio.sleep(0)` flush after each chunk
+- Built new API endpoints: `/api/start`, `/api/answer`, `/api/report`, `/api/transcribe`, `/api/analyze`, `/api/parse-document`, `/api/candidates`, `/api/candidate/{id}/memory`, `/api/session/{id}/export`, `DELETE /api/candidate/{id}`
+- Designed glassmorphism UI: `backdrop-filter: blur(20px)` glass panels, `#00d4ff` cyan accent, dot-grid sidebar texture, IBM Plex Mono labels
+- Canvas-drawn interactive memory graph — replaced pyvis iframe entirely
+- Sidebar stepper nav (Intake → Interview → Report)
+- Drag-and-drop file upload with PDF parsing via `/api/parse-document`
+- Voice input: MediaRecorder → Blob → Groq Whisper transcription pipeline
+- Debounced fit analysis band (JD↔resume match score, hidden until both fields populated)
+- Theme toggle (dark/light) via CSS custom properties + `data-theme` attribute
+- Fit analysis band fixed: hidden by default, shown only after successful `/api/analyze` response
 
 ---
 
-## Standing reminders
+### Jul 5 — Cleanup, bug fixes, and submission
 
-- Flavour 1 (candidate memory — "AI remembers a specific person") is the primary demo story. Flavour 2 (role memory via `memify()`) is a stretch goal only — don't let it block core flow.
-- `forget(candidate_id)` must stay in the final build; it demonstrates full lifecycle awareness and is called out by judging criteria.
-- No auth, no cloud infra — local-only, `streamlit run app.py` should be the entire deployment story.
+**Cognee + Groq structured output bug:**
+- `llama-3.3-70b-versatile` consistently omits `description` field from KnowledgeGraph nodes
+- Groq validates tool-call schemas server-side → rejects response → Cognee retries (8s → 16s → 32s → …)
+- `remember_qa()` was blocking SSE `done` event for 60+ seconds
+- Fix 1: switched `await remember_qa()` to `asyncio.create_task(remember_qa())` — fire-and-forget
+- Fix 2: tried `llama-3.1-70b-versatile` — decommissioned, made things worse
+- Fix 3: switched Cognee to `meta-llama/llama-4-scout-17b-16e-instruct` — Llama 4, better schema compliance
+
+**Code cleanup:**
+- Deleted `app.py` (Streamlit), root `voice.py` (local Whisper), `.claude/skills/streamlit-dev.md`
+- Removed pyvis from `requirements.txt` and the dead `/api/graph/{session_id}` endpoint from `server.py`
+- Removed unused `speak_text()` / pyttsx3 from `agents/voice.py`
+- Updated `README.md`, `CLAUDE.md`, all `.docs/` files
+
+**Submission checklist:**
+- [x] Full demo flow runs end-to-end without crashing
+- [x] `forget(candidate_id)` button visible and functional in UI
+- [x] All five Cognee lifecycle APIs used: `cognify`, `remember`, `recall`, `memify`, `forget`
+- [x] Canvas memory graph renders on report page
+- [x] Voice input works via Groq Whisper
+- [x] Fit analysis band (JD↔resume match) works with hide/show logic
+- [x] Theme toggle works
+- [x] README updated for FastAPI (not Streamlit)
+- [x] ADR-005 written for Cognee model decision
+- [ ] Backup demo video — record before submitting
+- [ ] Submission writeup — explain each Cognee lifecycle call explicitly (this is scored)
+
+---
+
+## Key pivots from the original plan
+
+| Planned | Actual | Why |
+|---------|--------|-----|
+| Anthropic SDK | Groq SDK | Speed + cost; 300 tok/s streaming |
+| Streamlit UI | FastAPI + vanilla JS | Async conflicts; CSS ceiling |
+| pyvis memory graph | Canvas-drawn graph | Full control; no iframe sizing hacks |
+| `streamlit run app.py` | `uvicorn server:app` | Follows from UI pivot |
+| Team of 4 | Solo | Team availability |
+| Neo4j stretch goal | Skipped entirely | Time; pyvis already replaced by canvas |
+| Local Whisper | Groq Whisper API | No model download needed |
+| `llama-3.3-70b` for Cognee | `llama-4-scout` for Cognee | Schema compliance (see ADR-005) |

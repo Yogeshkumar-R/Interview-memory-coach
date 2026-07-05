@@ -14,8 +14,9 @@ from typing import Optional
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -35,7 +36,16 @@ from agents.voice import transcribe_audio
 
 _cognee_config()
 
-app = FastAPI(title="Interview Memory Coach")
+# API schema endpoints are only exposed in development.
+# Set APP_ENV=staging or APP_ENV=production to hide them.
+_is_dev = os.getenv("APP_ENV", "development").lower() == "development"
+
+app = FastAPI(
+    title="Interview Memory Coach",
+    docs_url="/dev/swagger" if _is_dev else None,
+    redoc_url="/dev/redoc"   if _is_dev else None,
+    openapi_url="/dev/openapi.json" if _is_dev else None,
+)
 
 Path("static").mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -43,12 +53,22 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # In-memory session store (survives for the lifetime of the process)
 _sessions: dict = {}
 
+# Strong references to fire-and-forget background tasks.
+# asyncio holds only a weak ref to tasks; without this set, CPython's GC can
+# collect a task before it completes, silently dropping Cognee writes.
+_background_tasks: set = set()
+
 
 # ── Static pages ───────────────────────────────────────────────────────────────
 
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
+
+
+@app.get("/docs", include_in_schema=False)
+async def docs_page():
+    return FileResponse("static/docs.html")
 
 
 # ── Session start ──────────────────────────────────────────────────────────────
@@ -137,27 +157,39 @@ async def answer_stream(
     next_q = None if is_last else questions[answered_count + 1]
 
     async def event_stream():
+        import asyncio
         for w in warns:
             yield f"data: {json.dumps({'type': 'warning', 'content': w})}\n\n"
 
-        # Stream the interviewer reaction chunks
+        # asyncio.sleep(0) yields control back to the event loop so each SSE
+        # chunk is actually flushed to the client before the next is produced.
         response_text = ""
-        for chunk in _interviewer.stream_response(state, answer_clean, answered_count):
-            response_text += chunk
-            yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+        try:
+            for chunk in _interviewer.stream_response(state, answer_clean, answered_count):
+                response_text += chunk
+                yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+                await asyncio.sleep(0)
+        finally:
+            # Persist this turn whether or not the client is still connected.
+            # Using finally ensures a mid-stream disconnect doesn't silently
+            # lose the Q&A pair from both the session state and the JSON sidecar.
+            state["qa_pairs"].append({"question": current_q, "answer": answer_clean})
+            state["messages"].append({"role": "user", "content": answer_clean})
+            state["messages"].append({"role": "assistant", "content": response_text})
 
-        # Persist this turn
-        state["qa_pairs"].append({"question": current_q, "answer": answer_clean})
-        state["messages"].append({"role": "user", "content": answer_clean})
-        state["messages"].append({"role": "assistant", "content": response_text})
+            condensed = maybe_summarize(state["messages"])
+            if condensed is not state["messages"]:
+                state["messages"] = condensed
 
-        # Map-reduce if conversation is getting long
-        condensed = maybe_summarize(state["messages"])
-        if condensed is not state["messages"]:
-            state["messages"] = condensed
+            # Store the task reference so CPython's GC can't collect it before
+            # remember_qa completes (asyncio holds only a weak ref otherwise).
+            task = asyncio.create_task(
+                remember_qa(state["candidate_id"], session_id, current_q, answer_clean)
+            )
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
-        await remember_qa(state["candidate_id"], session_id, current_q, answer_clean)
-        save_chat_history(state["candidate_id"], session_id, state["messages"])
+            save_chat_history(state["candidate_id"], session_id, state["messages"])
 
         yield f"data: {json.dumps({'type': 'done', 'next_question': next_q, 'interview_ended': is_last})}\n\n"
 
@@ -191,50 +223,6 @@ async def generate_report(session_id: str = Form(...)):
     return JSONResponse({"report": state.get("report", {})})
 
 
-# ── Memory graph (pyvis HTML returned for iframe embed) ────────────────────────
-
-@app.get("/api/graph/{session_id}")
-async def memory_graph(session_id: str):
-    state = _sessions.get(session_id, {})
-    cid = state.get("candidate_id", "candidate")
-    sid = session_id
-    report = state.get("report", {})
-
-    try:
-        from pyvis.network import Network
-        net = Network(height="100%", width="100%", bgcolor="#080d1a", font_color="#94a3b8")
-        net.set_options("""{
-          "nodes": {"font": {"size": 12}, "borderWidth": 1, "shape": "dot"},
-          "edges": {"smooth": {"type": "continuous"}, "font": {"size": 9, "align": "middle"},
-                    "color": {"color": "rgba(100,116,139,0.5)"}},
-          "physics": {"stabilization": {"iterations": 200}}
-        }""")
-
-        net.add_node(cid, label=cid, color="#00d4ff", size=24)
-        net.add_node(sid, label=f"Session {sid}", color="#334155", size=16)
-        net.add_edge(sid, cid, title="belongs_to", label="belongs_to")
-
-        for score in report.get("scores", []):
-            skill = score.get("skill", "")
-            val = score.get("value", 0)
-            color = "#10b981" if val >= 4 else "#f59e0b" if val >= 3 else "#ef4444"
-            nid = f"skill_{skill.lower().replace(' ', '_')}"
-            net.add_node(nid, label=f"{skill}\n{val}/5", color=color, size=14)
-            net.add_edge(cid, nid, title="has_skill", label="has_skill")
-
-        for gap in report.get("gaps", []):
-            skill = gap.get("skill", "")
-            nid = f"gap_{skill.lower().replace(' ', '_')}"
-            if not any(n["id"] == nid for n in net.nodes):
-                net.add_node(nid, label=f"Gap: {skill}", color="#ef4444", size=12)
-            net.add_edge(cid, nid, title="gap", label="gap")
-
-        graph_html = net.generate_html(notebook=False)
-        return HTMLResponse(content=graph_html)
-    except ImportError:
-        return HTMLResponse("<p style='color:#64748b;font-family:monospace;padding:1rem'>pip install pyvis</p>")
-
-
 # ── GDPR forget ────────────────────────────────────────────────────────────────
 
 @app.delete("/api/candidate/{candidate_id}")
@@ -251,6 +239,172 @@ async def forget(candidate_id: str):
 @app.get("/api/profile/{candidate_id}")
 async def profile(candidate_id: str):
     return JSONResponse(get_candidate_profile(candidate_id))
+
+
+# ── Health ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/health")
+async def health():
+    return JSONResponse({
+        "status": "ok",
+        "service": "Interview Memory Coach",
+        "env": os.getenv("APP_ENV", "development"),
+        "swagger": "/dev/swagger" if _is_dev else None,
+    })
+
+
+# ── Candidates list ────────────────────────────────────────────────────────────
+
+@app.get("/api/candidates")
+async def list_candidates():
+    from agents.memory import _load
+    store = _load()
+    result = []
+    for cid, data in store.items():
+        sessions = data.get("sessions", [])
+        scores_flat = []
+        for s in sessions:
+            for sc in s.get("report", {}).get("scores", []):
+                raw = sc.get("value") if sc.get("value") is not None else sc.get("score")
+                try:
+                    scores_flat.append(float(raw))
+                except (TypeError, ValueError):
+                    pass
+        result.append({
+            "candidate_id": cid,
+            "session_count": len(sessions),
+            "average_score": round(sum(scores_flat) / len(scores_flat), 1) if scores_flat else None,
+        })
+    return JSONResponse({"candidates": result})
+
+
+# ── Candidate memory graph ─────────────────────────────────────────────────────
+
+@app.get("/api/candidate/{candidate_id}/memory")
+async def candidate_memory(candidate_id: str):
+    from agents.memory import _load
+    store = _load()
+    data = store.get(candidate_id, {})
+    sessions = data.get("sessions", [])
+
+    nodes: list = []
+    edges: list = []
+    cnode = f"candidate:{candidate_id}"
+    nodes.append({"id": cnode, "label": candidate_id, "group": "Candidate",
+                  "detail": f"Candidate: {candidate_id}, {len(sessions)} session(s)"})
+
+    for s in sessions:
+        sid = s.get("session_id", "")
+        if not sid:
+            continue
+        snode = f"session:{sid}"
+        nodes.append({"id": snode, "label": sid[-6:], "group": "Session",
+                       "detail": f"Session {sid}, {s.get('date', 'date unknown')}"})
+        edges.append({"from": snode, "to": cnode, "label": "belongs_to"})
+
+        for score in s.get("report", {}).get("scores", []):
+            skill = score.get("skill", "")
+            if not skill:
+                continue
+            nid = f"skill:{skill.lower().replace(' ', '_')}"
+            if not any(n["id"] == nid for n in nodes):
+                val = score.get("value", score.get("score", "?"))
+                nodes.append({"id": nid, "label": skill, "group": "Skill",
+                               "detail": f"Skill: {skill}  —  {val}/5"})
+            if not any(e["from"] == cnode and e["to"] == nid for e in edges):
+                edges.append({"from": cnode, "to": nid, "label": "has_skill"})
+
+        for gap in s.get("report", {}).get("gaps", []):
+            skill = gap.get("skill", "")
+            if not skill:
+                continue
+            nid = f"gap:{skill.lower().replace(' ', '_')}"
+            if not any(n["id"] == nid for n in nodes):
+                nodes.append({"id": nid, "label": skill, "group": "Gap",
+                               "detail": f"Gap: {skill} — {gap.get('description', '')}"})
+            if not any(e["from"] == cnode and e["to"] == nid for e in edges):
+                edges.append({"from": cnode, "to": nid, "label": "gap"})
+
+    prior_sessions = [
+        {"scores": s.get("report", {}).get("scores", []),
+         "gaps":   s.get("report", {}).get("gaps", [])}
+        for s in sessions
+    ]
+    return JSONResponse({
+        "graph": {"nodes": nodes, "edges": edges},
+        "prior_context": {"sessions": prior_sessions} if prior_sessions else None,
+    })
+
+
+# ── Fit analysis ───────────────────────────────────────────────────────────────
+
+class AnalyzeRequest(BaseModel):
+    jd: str
+    resume: str
+
+
+@app.post("/api/analyze")
+async def analyze_fit(req: AnalyzeRequest):
+    from agents.base import chat as _chat
+    prompt = (
+        "Analyze the fit between this job description and resume. "
+        "Return ONLY valid JSON with exactly these fields:\n"
+        '{"match_score": <integer 0-100>, "role_title": "<string>", '
+        '"experience_hint": "<string>", "strengths": ["<skill>", ...], '
+        '"gaps": ["<skill>", ...]}\n\n'
+        f"JD:\n{req.jd[:2000]}\n\nResume:\n{req.resume[:2000]}"
+    )
+    try:
+        raw = _chat(
+            messages=[{"role": "user", "content": prompt}],
+            system="Return only valid JSON. No markdown. No extra text.",
+            max_tokens=350,
+        )
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return JSONResponse(json.loads(raw.strip()))
+    except Exception as exc:
+        print(f"[analyze] {exc}")
+        return JSONResponse({
+            "match_score": 50, "role_title": "Role",
+            "experience_hint": "unknown", "strengths": [], "gaps": [],
+        })
+
+
+# ── Document parsing ───────────────────────────────────────────────────────────
+
+@app.post("/api/parse-document")
+async def parse_document(file: UploadFile = File(...)):
+    content = await file.read()
+    filename = (file.filename or "").lower()
+    try:
+        if filename.endswith(".pdf"):
+            doc = fitz.open(stream=content, filetype="pdf")
+            text = "\n".join(p.get_text() for p in doc)
+        else:
+            text = content.decode("utf-8", errors="replace")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not parse document: {exc}")
+    return JSONResponse({"text": text.strip(), "char_count": len(text)})
+
+
+# ── Session export ─────────────────────────────────────────────────────────────
+
+@app.get("/api/session/{session_id}/export")
+async def export_session(session_id: str):
+    s = _sessions.get(session_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return JSONResponse({
+        "session_id": session_id,
+        "candidate_id": s.get("candidate_id"),
+        "questions": s.get("questions", []),
+        "qa_pairs": s.get("qa_pairs", []),
+        "report": s.get("report"),
+    })
 
 
 if __name__ == "__main__":
