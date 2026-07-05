@@ -1,135 +1,175 @@
-# System design — Interview Memory Coach (UC1)
+# System Design — Interview Memory Coach
 
-**Hackathon:** WeMakeDevs × Cognee · Jun 29 – Jul 5 2026
-**Team size:** 4 · **Available time:** ~25 hrs total
+**Hackathon:** WeMakeDevs × Cognee · Jun 29–Jul 5 2026  
+**Status:** Implemented and submitted Jul 5 2026
 
 ---
 
 ## 1. Requirements
 
-### Functional (hackathon scope)
+### Functional
 
-- Recruiter uploads a Job Description (JD) and candidate resume
+- Recruiter uploads a Job Description and candidate resume (PDF or text)
+- Pre-interview fit analysis: JD↔resume match score, strengths, gaps (debounced, appears only after both fields populated)
 - System auto-generates targeted interview questions from JD↔resume gap analysis
-- Agent conducts a text interview session with streaming responses
-- Every Q&A pair is stored in Cognee via `cognify()` + `remember()`
+- Agent conducts a text/voice interview with SSE-streamed responses
+- Every Q&A pair stored in Cognee via `remember()` per turn
 - Cross-session: `recall()` surfaces prior performance for returning candidates
-- Post-interview analysis agent generates a structured report (scores, gaps, recommendation)
-- `memify()` improves question quality across accumulated interviews
-- `forget(candidate_id)` clears candidate data (GDPR demonstration)
+- Post-interview analysis: scored report (skills, gaps, recommendation score /100)
+- `memify()` writes role-level question quality metadata after each session
+- `forget(candidate_id)` clears all candidate data — Cognee graph + JSON sidecar (GDPR)
+- Canvas-drawn interactive memory graph on the report page
+- Voice input via browser MediaRecorder → Groq Whisper transcription
 
-### Non-functional (hackathon reality)
+### Non-functional
 
-| Concern | Target |
-|---|---|
-| Latency | < 5s per question generation |
-| Reliability | Single-user demo must not crash |
-| Auth | None required (single-tenant, local) |
-| Deployment | `streamlit run app.py` — zero config |
-
-### Constraints
-
-- Python-fluent team
-- Cognee required and must use memory lifecycle APIs deeply
-- No cloud infra — everything runs locally on a laptop
+| Concern | Target | Actual |
+|---------|--------|--------|
+| Streaming latency | < 200 ms first chunk | ~100 ms (Groq 300 tok/s) |
+| Session start time | < 10 s | ~5 s (Cognee cognify pipeline) |
+| Reliability | Single-user demo must not crash | Stable; Cognee retries are fire-and-forget |
+| Auth | None | None (single-tenant, local) |
+| Deployment | Single command | `uvicorn server:app --port 8000` |
 
 ---
 
-## 2. High-level architecture
+## 2. Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                        UI layer                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Recruiter UI │  │ Candidate UI │  │ Report viewer│  │
-│  │ Upload JD +  │  │ Chat session │  │ Post-         │  │
-│  │ resume       │  │ streaming    │  │ interview     │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
-└─────────┼─────────────────┼─────────────────┼───────────┘
-          │                 │                 │
-┌─────────▼─────────────────▼─────────────────▼───────────┐
-│                      Agent layer                         │
-│         (Python · raw Anthropic SDK · async)             │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐   │
-│  │ Intake      │  │ Interviewer  │  │ Analysis      │   │
-│  │ agent       │  │ agent        │  │ agent         │   │
-│  │ Parse JD,   │  │ Q generation │  │ Score, gap    │   │
-│  │ resume      │  │ + dialogue   │  │ analysis      │   │
-│  └─────────────┘  └──────────────┘  └───────────────┘   │
-└──────────────────────────┬───────────────────────────────┘
-                           │
-┌──────────────────────────▼───────────────────────────────┐
-│                  Cognee memory layer                     │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐   │
-│  │ cognify()   │  │ recall()     │  │ memify()      │   │
-│  │ Ingest      │  │ Prior session│  │ Improve across│   │
-│  │ session     │  │ context      │  │ hires         │   │
-│  └─────────────┘  └──────────────┘  └───────────────┘   │
-└──────────────────────────┬───────────────────────────────┘
-                           │
-┌──────────────────────────▼───────────────────────────────┐
-│                       Storage                            │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐   │
-│  │ Graph store │  │ Vector store │  │ File store    │   │
-│  │ NetworkX    │  │ LanceDB      │  │ Local disk    │   │
-│  │ Entity      │  │ Semantic     │  │ Resumes,      │   │
-│  │ relations   │  │ search       │  │ reports       │   │
-│  └─────────────┘  └──────────────┘  └───────────────┘   │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Browser (static/index.html)                  │
+│                                                                 │
+│  ┌──────────────┐   ┌──────────────────┐   ┌────────────────┐  │
+│  │  Intake view │   │  Interview view  │   │  Report view   │  │
+│  │  JD + resume │   │  SSE chat stream │   │  Scores +      │  │
+│  │  Fit analysis│   │  Voice input     │   │  Canvas graph  │  │
+│  └──────┬───────┘   └────────┬─────────┘   └───────┬────────┘  │
+└─────────┼────────────────────┼─────────────────────┼───────────┘
+          │  REST + SSE        │                     │
+┌─────────▼────────────────────▼─────────────────────▼───────────┐
+│                       server.py (FastAPI)                       │
+│                                                                 │
+│  /api/start          /api/answer (SSE)    /api/report          │
+│  /api/transcribe     /api/analyze         /api/parse-document  │
+│  /api/candidates     /api/candidate/{id}/memory                │
+│  /api/session/{id}/export                                       │
+│  DELETE /api/candidate/{id}   /api/health                      │
+└──────────┬──────────────────────────────────────────────────────┘
+           │
+┌──────────▼──────────────────────────────────────────────────────┐
+│                       agents/ (Python)                          │
+│                                                                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │  intake.py   │  │interviewer.py│  │    analysis.py       │  │
+│  │  PyMuPDF     │  │  stream_     │  │  score answers       │  │
+│  │  cognify()   │  │  response()  │  │  gap analysis        │  │
+│  │  questions   │  │  recall()    │  │  memify()            │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
+│                                                                 │
+│  base.py          memory.py          guardrails.py  voice.py   │
+│  Groq client      5 Cognee APIs      sanitize()     Whisper    │
+│  chat() wrapper   JSON sidecar       validate_cid()  STT       │
+└──────────┬──────────────────────────────────────────────────────┘
+           │
+┌──────────▼──────────────────────────────────────────────────────┐
+│              Cognee memory layer (Cognee 1.2.2)                 │
+│                                                                 │
+│  cognify()    remember()    recall()    memify()    forget()    │
+│                                                                 │
+│  NetworkX graph store + LanceDB vector store                   │
+│  (~/.cognee/ inside venv)                                       │
+│                                                                 │
+│  JSON sidecar: ~/.cognee_coach/sessions.json                   │
+│  (structured index for deterministic lookups)                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 3. Component descriptions
 
-### Intake agent
+### `server.py` — FastAPI backend
 
-Receives the JD and resume PDF, extracts structured text, identifies key entities (required skills, experience levels, role expectations), and calls `cognify()` to build the initial entity graph for the session.
+Holds the in-memory session store (`_sessions: dict`), routes all HTTP and SSE requests, and wires the agent functions together. No business logic lives here — it delegates to `agents/`.
 
-**Inputs:** JD string, resume PDF (base64)
-**Outputs:** `session_id`, extracted entities dict, initial question set
+SSE streaming pattern:
+```python
+async def event_stream():
+    for chunk in _interviewer.stream_response(state, answer, idx):
+        yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+        await asyncio.sleep(0)   # yield event loop so chunks actually flush
+    asyncio.create_task(remember_qa(...))  # non-blocking memory write
+    yield f"data: {json.dumps({'type': 'done', ...})}\n\n"
+```
 
-### Interviewer agent
+### `agents/intake.py` — session start
 
-Maintains the dialogue state, generates follow-up questions based on candidate answers, and stores each Q&A pair live via `remember()`. On session start it calls `recall(candidate_id)` to load any prior session context and adjusts question depth accordingly.
+Receives JD text + resume text, calls `cognee.add()` + `cognee.cognify()` to build the initial entity graph, calls `recall_prior()` to load any prior session context, and generates the initial question set via the Groq LLM.
 
-**Inputs:** `session_id`, candidate answer string
-**Outputs:** next question string (streamed), optional follow-up probe
+**Inputs:** `jd_text: str`, `resume_text: str`, `candidate_id: str`  
+**Outputs:** `questions: list[str]`, `prior_context: dict | None`, updated state dict
 
-### Analysis agent
+### `agents/interviewer.py` — streaming dialogue
 
-Runs post-session. Reads the full session graph from Cognee, scores each answer against the JD requirements, identifies skill gaps vs. resume claims, and writes a structured report. Calls `memify()` to update role-level question quality metadata.
+Maintains dialogue context, generates follow-up responses as a sync generator (`yield chunk`), and injects prior session context into the system prompt for returning candidates.
 
-**Inputs:** `session_id`
-**Outputs:** report dict `{ summary, scores[], gaps[], recommendation }`
+**Inputs:** state dict, `answer: str`, `question_idx: int`  
+**Outputs:** sync generator of text chunks
+
+### `agents/analysis.py` — post-session scoring
+
+Reads `qa_pairs` from state, scores each answer against JD requirements using the Groq LLM, identifies skill gaps, generates a recommendation, and calls `memify()` to write role-level metadata.
+
+**Inputs:** state dict (with completed `qa_pairs`)  
+**Outputs:** `report: dict` — `{ summary, scores[], gaps[], recommendation, recommendation_score }`
+
+### `agents/memory.py` — Cognee lifecycle
+
+All five Cognee API wrappers plus the JSON sidecar.
+
+| Function | Cognee call | Purpose |
+|----------|-------------|---------|
+| `cognify_session()` | `cognee.add()` + `cognee.cognify()` | Build entity graph from JD + resume |
+| `remember_qa()` | `cognee.remember()` | Store Q&A pair per turn |
+| `recall_prior()` | `cognee.recall()` | Load prior session context |
+| `memify_session()` | `cognee.memify()` | Write role-level question quality |
+| `forget_candidate()` | `cognee.forget()` | GDPR wipe — Cognee + sidecar |
+
+### `agents/voice.py` — speech-to-text
+
+```python
+client.audio.transcriptions.create(
+    model="whisper-large-v3",
+    file=(filename, audio_bytes),
+    response_format="text",
+)
+```
+
+No local model download. The browser records via MediaRecorder → webm blob → `POST /api/transcribe` → Groq Whisper.
 
 ---
 
-## 4. API contracts
+## 4. API reference
 
-Three endpoints exposed by a thin FastAPI layer (or called directly from Streamlit):
-
-```python
-POST /session/start
-  body:    { jd: str, resume_pdf: str (base64), candidate_id: str }
-  returns: { session_id: str, questions: list[str], prior_context: dict | None }
-
-POST /session/answer
-  body:    { session_id: str, question_index: int, answer: str }
-  returns: { next_question: str | None, follow_up: str | None }
-
-POST /session/end
-  body:    { session_id: str }
-  returns: { report: { summary: str, scores: list, gaps: list, recommendation: str } }
-```
-
-Inter-agent state is passed as plain Python dicts. No message queues needed at hackathon scale.
+| Method | Endpoint | Body / Params | Returns |
+|--------|----------|---------------|---------|
+| `POST` | `/api/start` | multipart: `candidate_id`, `jd_text`, `resume_file?`, `resume_text?` | `{ session_id, candidate_id, questions, first_question, prior_context }` |
+| `POST` | `/api/answer` | multipart: `session_id`, `answer_text` | SSE stream: `chunk` / `warning` / `done` events |
+| `POST` | `/api/report` | multipart: `session_id` | `{ report }` |
+| `POST` | `/api/transcribe` | multipart: `audio` (file) | `{ transcript }` |
+| `POST` | `/api/analyze` | JSON: `{ jd, resume }` | `{ match_score, role_title, experience_hint, strengths[], gaps[] }` |
+| `POST` | `/api/parse-document` | multipart: `file` (PDF or txt) | `{ text, char_count }` |
+| `GET`  | `/api/candidates` | — | `{ candidates: [{ candidate_id, session_count, average_score }] }` |
+| `GET`  | `/api/candidate/{id}/memory` | — | `{ graph: { nodes, edges }, prior_context }` |
+| `GET`  | `/api/session/{id}/export` | — | `{ session_id, candidate_id, questions, qa_pairs, report }` |
+| `DELETE` | `/api/candidate/{id}` | — | `{ status, candidate_id }` |
+| `GET`  | `/api/health` | — | `{ status, service }` |
 
 ---
 
 ## 5. Cognee memory data model
 
-Each `cognify()` call builds a graph with these entities and edges:
+### Graph schema
 
 ```
 Candidate ──has_skill──────────> Skill
@@ -139,116 +179,73 @@ Session   ──belongs_to─────────> Candidate
 Session   ──contains───────────> QAPair
 QAPair    ──assessed_by────────> Score
 Score     ──flags──────────────> Skill  (gap or strength)
+QuestionTemplate ──performed_well_on──> Role   (added by memify)
 ```
 
-`memify()` adds a second graph layer:
+### JSON sidecar schema (`~/.cognee_coach/sessions.json`)
 
+```json
+{
+  "candidate_id": {
+    "sessions": [
+      {
+        "session_id": "sess_XXXXXX",
+        "date": "2026-07-05T16:43:00",
+        "report": {
+          "scores": [{ "skill": "Python", "value": 4 }],
+          "gaps": [{ "skill": "Distributed Systems", "description": "..." }],
+          "recommendation_score": 72
+        },
+        "messages": [{ "role": "user|assistant|system", "content": "..." }]
+      }
+    ]
+  }
+}
 ```
-QuestionTemplate ──performed_well_on──> Role
-QuestionTemplate ──discriminated──────> Skill
-```
-
-This is how question quality improves across hires — the Interviewer agent `recall()`s high-signal question templates when generating questions for a new role match.
 
 ---
 
 ## 6. Cross-session memory strategy
 
-Two flavours are implemented; Flavour 1 is the primary demo story.
+### Flavour 1 — Candidate memory (primary demo)
 
-**Flavour 1 — Candidate memory (demo centrepiece)**
-
-`recall(candidate_id)` returns prior scores, unanswered questions, and flagged gaps. On the candidate's second interview session, the agent surfaces this context directly in its system prompt:
+On session start, `recall_prior()` loads prior scores and gaps from both the JSON sidecar (structured) and Cognee `recall()` (semantic). The interviewer system prompt is injected with:
 
 ```
-"Last session: Alice struggled with system design (score 2/5) but
-excelled at Python fundamentals (5/5). Probe system design deeper
-this session. Do not re-ask questions already answered well."
+"Prior session context: [candidate] scored 2/5 on Distributed Systems.
+Probe this area. Avoid repeating questions answered well in prior sessions."
 ```
 
-**Flavour 2 — Role memory (stretch goal, Day 5–6)**
+### Flavour 2 — Role memory (implemented, partially wired)
 
-After several interviews for the same role, `memify()` builds a quality graph across `QuestionTemplate` nodes. The Interviewer agent uses this to rank question candidates by historical discrimination power before presenting them.
-
-**Seeding for the demo:** Run `seed_memory.py` before the demo to pre-load 2–3 synthetic prior sessions. This ensures `recall()` returns meaningful context on Day 1 of the demo even with no real users.
+`memify()` writes `QuestionTemplate → performed_well_on → Role` edges after each session. Data accumulates. Query-side ranking of questions by historical discrimination power is a stretch goal not yet wired into question generation.
 
 ---
 
 ## 7. Tech stack
 
-| Layer | Choice | Rationale |
-|---|---|---|
-| UI | Streamlit | Chat components, file upload, streaming — all native |
-| Agent orchestration | Raw Anthropic SDK | Transparent, debuggable, no abstraction fighting Cognee |
-| Memory | Cognee (self-hosted) | Required; `cognee.config.set_llm_provider("anthropic")` |
-| Vector store | LanceDB (Cognee default) | Zero setup, embedded, persists to `~/.cognee/` |
-| Graph store | NetworkX (Cognee default) | No Docker needed; exportable to pyvis for demo |
-| PDF parsing | PyMuPDF (`fitz`) | 3 lines, fast, no external process |
-| Graph visualisation | pyvis → `st.components.v1.html` | Shows live memory graph to judges |
-| Voice (optional) | OpenAI Whisper | Bolt on Day 5 only if core is done |
+| Layer | Technology | Version / Notes |
+|-------|-----------|-----------------|
+| Backend | FastAPI | `uvicorn --reload` for development |
+| UI | Vanilla JS, CSS custom properties | Single file: `static/index.html` |
+| LLM (agents) | Groq `llama-3.3-70b-versatile` | Direct Groq SDK, text output |
+| LLM (Cognee graph) | Groq `llama-4-scout-17b-16e-instruct` | Via LiteLLM `groq/` prefix; needed for tool-call schema compliance |
+| Memory | Cognee 1.2.2 | NetworkX + LanceDB defaults |
+| Embeddings | FastEmbed `BAAI/bge-small-en-v1.5` | Local, no API key |
+| STT | Groq Whisper `whisper-large-v3` | No local model download |
+| PDF parsing | PyMuPDF (fitz) | |
+| Graph viz | Canvas + vanilla JS | ~200 lines; replaced pyvis |
 
 ---
 
-## 8. Day-by-day build plan
+## 8. Trade-offs and known limitations
 
-| Day | Person 1 (Cognee) | Person 2 (Agents) | Person 3 (Analysis) | Person 4 (UI) |
-|---|---|---|---|---|
-| 1 | Cognee setup, `cognify` smoke test | `agents/base.py`, SDK client, retry wrapper | — | Streamlit 3-page scaffold |
-| 2 | Entity graph design, `seed_memory.py` | Intake agent + question generation | Analysis agent skeleton | File upload → session start wired |
-| 3 | `recall()` integration, cross-session test | Interviewer agent, `remember()` per turn | Scoring logic | Streaming chat interview working |
-| 4 | `memify()` role graph (Flavour 2 start) | Session continuity, follow-up probes | Report dict structure | Report page layout |
-| 5 | Neo4j swap attempt (2-hr time-box) | End-to-end session test | Report polish | pyvis graph embed, `forget()` button |
-| 6 | Buffer / polish | Buffer / polish | Buffer / polish | Demo script, video recording |
-| 7 | Submission writeup | — | — | — |
+**Cognee + Groq structured output:** Cognee's internal graph extraction requires the model to include a `description` field on every node. `llama-3.3-70b-versatile` omits it; Groq rejects the tool call. Mitigated by switching Cognee's internal model to Llama 4 Scout and making `remember_qa()` fire-and-forget so retries don't block the UI. See ADR-005.
 
----
+**In-memory session store:** `_sessions: dict` in `server.py` is process-scoped. Sessions are lost on server restart. For a hackathon demo this is acceptable; production would need Redis or a database.
 
-## 9. Day 1 validation script
+**No auth / multi-tenancy:** Single-tenant, local. The `forget(candidate_id)` button demonstrates GDPR awareness. Called out explicitly in the README.
 
-Run this first. If it completes without errors, the foundation is solid.
+**`memify()` cold start:** Without real usage history, role memory (Flavour 2) shows nothing interesting. `seed_memory.py` pre-loads synthetic sessions to make `recall()` meaningful from the first demo run.
 
-```python
-import asyncio
-import cognee
-import anthropic
-import fitz  # PyMuPDF
-
-async def smoke_test():
-    # 1. Parse a resume
-    doc = fitz.open("sample_resume.pdf")
-    resume_text = "\n".join(p.get_text() for p in doc)
-
-    # 2. Ingest into Cognee
-    jd_text = "Senior Backend Engineer: Python, system design, distributed systems"
-    await cognee.cognify([resume_text, jd_text])
-
-    # 3. Recall (empty first run — should return None or empty)
-    context = await cognee.recall("candidate_001")
-    print("Prior context:", context)
-
-    # 4. Generate questions using Claude
-    client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=500,
-        messages=[{
-            "role": "user",
-            "content": f"Context: {context}\nJD: {jd_text}\nResume: {resume_text[:500]}\n\nGenerate 5 targeted interview questions."
-        }]
-    )
-    print(msg.content[0].text)
-
-asyncio.run(smoke_test())
-```
-
----
-
-## 10. Trade-offs
-
-**Streamlit single-thread:** `st.write_stream()` with `anthropic.messages.stream()` handles streaming natively since Streamlit 1.28. No workaround needed.
-
-**NetworkX vs Neo4j:** Defaults work on any laptop without Docker. If Neo4j Browser demo visuals are wanted, attempt the swap on Day 5 in a branch with a 2-hour time-box. Revert if unstable. Use pyvis regardless for graph visualisation in the UI.
-
-**No auth / multi-tenancy:** Intentional for hackathon scope. The `forget(candidate_id)` button demonstrates awareness of the gap and covers GDPR intent. Call it out explicitly in the submission.
-
-**`memify()` cold start:** Without real usage history, Flavour 2 (role memory) shows nothing interesting. Mitigation is `seed_memory.py` with synthetic interviews. Even 3 seeded sessions produce a visible graph that demonstrates the concept.
+**Cognee DB migrations on first run:** The first `cognify()` call triggers 20+ Alembic migrations, adding 4–5 seconds to the first session start. Subsequent starts skip migrations and are faster. Mitigated by starting the server and immediately doing a health check (`GET /api/health`) before the demo so the migration runs before the audience is watching.

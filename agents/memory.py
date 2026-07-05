@@ -24,7 +24,9 @@ def _cognee_config():
     try:
         import cognee
         cognee.config.set_llm_provider("openai")
-        cognee.config.set_llm_model("groq/llama-3.3-70b-versatile")
+        # Llama 4 Scout: best available Groq model for structured output / tool-call
+        # schema compliance. See .docs/architecture-decisions.md ADR-005 for history.
+        cognee.config.set_llm_model("groq/meta-llama/llama-4-scout-17b-16e-instruct")
         cognee.config.set_llm_api_key(groq_key)
         try:
             cognee.config.set_embedding_model("BAAI/bge-small-en-v1.5")

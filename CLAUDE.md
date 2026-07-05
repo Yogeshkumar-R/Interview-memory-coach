@@ -1,53 +1,42 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with code in this repository.
 
 ## Project overview
 
-**Interview Memory Coach** — a hackathon submission (WeMakeDevs × Cognee, Jun 29–Jul 5 2026). An AI-powered interview system that remembers candidates across sessions using Cognee's memory lifecycle APIs. The entire app runs locally with `streamlit run app.py`.
+**Interview Memory Coach** — hackathon submission (WeMakeDevs × Cognee, Jun 29–Jul 5 2026).  
+An AI-powered interview system that remembers candidates across sessions using Cognee's memory lifecycle APIs.
 
 ## Commands
 
 ```bash
 # Install dependencies
-pip install cognee groq streamlit PyMuPDF pyvis
-
-# Seed synthetic memory data (run before demo)
-python seed_memory.py
+pip install -r requirements.txt
 
 # Run the app
-streamlit run app.py
-
-# Run the Day 1 smoke test to verify Cognee + Anthropic integration
-python smoke_test.py
+uvicorn server:app --reload --port 8000
+# Open http://localhost:8000
 ```
 
 ## Architecture
 
-Three-layer stack: Streamlit UI → Python agents (raw Anthropic SDK) → Cognee memory.
+Three-layer stack: **FastAPI + vanilla JS UI → Groq LLM agents → Cognee memory**
 
 ```
-UI (app.py)
-  └─ page: "upload"     → calls session_start()   → Intake agent
-  └─ page: "interview"  → calls session_answer()  → Interviewer agent  
-  └─ page: "report"     → calls session_end()     → Analysis agent
-                                                        │
-                                              Cognee memory layer
-                                   (NetworkX graph + LanceDB vector, ~/.cognee/)
+Browser (static/index.html)   — glassmorphism SPA, vanilla JS, canvas graph
+        │  REST + SSE
+        ▼
+server.py (FastAPI)            — routing, session store, SSE streaming
+        │
+        ├── agents/intake.py   → cognify() — entity graph from JD + resume
+        ├── agents/interviewer.py → stream_response() + remember() per turn
+        ├── agents/analysis.py → scoring + memify()
+        ├── agents/memory.py   → all five Cognee lifecycle wrappers + JSON sidecar
+        ├── agents/voice.py    → Groq Whisper STT
+        └── agents/guardrails.py → input sanitization
 ```
 
-### Agents (`agents/`)
-
-| File | Responsibility |
-|---|---|
-| `agents/base.py` | Shared Anthropic client, ~20-line retry wrapper, streaming helper |
-| `agents/intake.py` | Parse JD + resume PDF via PyMuPDF, call `cognee.cognify()`, return initial question set |
-| `agents/interviewer.py` | Dialogue state, question generation, `remember()` per turn, `recall()` at session start |
-| `agents/analysis.py` | Post-session scoring, gap analysis, `memify()` for role-level quality metadata |
-
-Every agent is an `async def` function accepting a `messages: list` parameter. State between agents is a plain dict — schema must be agreed before writing any agent.
-
-### Inter-agent state dict schema
+## Inter-agent state dict schema
 
 ```python
 {
@@ -55,64 +44,51 @@ Every agent is an `async def` function accepting a `messages: list` parameter. S
     "candidate_id": str,
     "jd_text": str,
     "resume_text": str,
-    "extracted_entities": dict,   # set by Intake agent
-    "questions": list[str],       # set by Intake agent
-    "qa_pairs": list[dict],       # appended by Interviewer agent per turn
+    "extracted_entities": dict,   # set by intake
+    "questions": list[str],       # set by intake
+    "qa_pairs": list[dict],       # appended per answer turn
     "prior_context": dict | None, # set by recall() at session start
-    "report": dict | None,        # set by Analysis agent
+    "report": dict | None,        # set by analysis agent
+    "messages": list[dict],       # full chat history (role/content)
+    "interview_ended": bool,
 }
 ```
 
-### Cognee memory data model
+## Key implementation details
 
-```
-Candidate ──has_skill──────────> Skill
-Candidate ──applied_for────────> Role
-Role      ──requires_skill─────> Skill
-Session   ──belongs_to─────────> Candidate
-Session   ──contains───────────> QAPair
-QAPair    ──assessed_by────────> Score
-Score     ──flags──────────────> Skill  (gap or strength)
-```
+- **SSE streaming:** `POST /api/answer` returns a `StreamingResponse` with `text/event-stream`.  
+  Each event is `data: {"type": "chunk"|"warning"|"done", ...}\n\n`.  
+  `asyncio.sleep(0)` after each chunk yields the event loop so chunks actually flush.
 
-`memify()` adds a second layer: `QuestionTemplate ──performed_well_on──> Role`
+- **remember_qa is fire-and-forget:** Called via `asyncio.create_task()` inside the SSE generator  
+  so Cognee's internal retries (Groq schema validation issues) don't block the `done` event.
 
-### UI pages (`app.py`)
+- **Cognee + Groq structured output:** Cognee 1.2.2 uses `llama-4-scout-17b-16e-instruct` via the  
+  `groq/` LiteLLM prefix (see ADR-005). The model must produce `description` on every  
+  KnowledgeGraph node or Groq's tool-call validator rejects the response and Cognee retries  
+  with exponential backoff. `remember_qa` is also called via `asyncio.create_task()` with a  
+  strong reference stored in `_background_tasks` so the task isn't GC'd mid-run.
 
-Three pages managed via `st.session_state["page"]`:
-- `"upload"` — `st.file_uploader` for JD + resume PDF
-- `"interview"` — `st.chat_message` / `st.chat_input` with `st.write_stream()` for streaming
-- `"report"` — `st.metric`, `st.progress`, `st.dataframe` for analysis output + pyvis graph embed + `forget()` button
+- **JSON sidecar:** `~/.cognee_coach/sessions.json` is the reliable structured store used by  
+  `/api/candidates`, `/api/candidate/{id}/memory`, and cross-session recall.  
+  Cognee's graph/vector layer is the semantic layer for `remember()`/`recall()`.
 
-### Cognee lifecycle calls
+- **Canvas graph:** The memory graph in the UI is drawn on a `<canvas>` element — no pyvis,  
+  no iframes. Node data comes from `GET /api/candidate/{id}/memory`.
+
+## Cognee lifecycle calls
 
 | Call | Where | Purpose |
-|---|---|---|
-| `cognify()` | Intake agent | Build entity graph from JD + resume |
-| `remember()` | Interviewer agent, every turn | Store each Q&A pair live |
-| `recall(candidate_id)` | Interviewer agent, session start | Surface prior performance |
-| `memify()` | Analysis agent, session end | Update role-level question quality graph |
-| `forget(candidate_id)` | Report page UI button | GDPR demo — must stay in final build |
+|------|-------|---------|
+| `cognify()` | intake.py | Build entity graph from JD + resume |
+| `remember()` | memory.py `remember_qa()` | Store each Q&A pair per turn |
+| `recall()` | memory.py `recall_prior()` | Surface prior performance at session start |
+| `memify()` | analysis.py | Update role-level question quality graph |
+| `forget()` | memory.py `forget_candidate()` | GDPR — must stay in final build |
 
-## Key decisions (from ADRs)
+## Rules
 
-- **Raw Anthropic SDK only** — no LangChain/LlamaIndex. Cognee has no LangChain memory adapter; fighting it wastes hours.
-- **Cognee defaults** — NetworkX + LanceDB. No Docker, no credentials. Neo4j swap is explicitly ruled out (ADR-002); use pyvis for graph visualisation instead.
-- **Streamlit** — `st.write_stream()` + `anthropic.messages.stream()` handle streaming natively since v1.28.
-- **`forget()` is mandatory** — judges score on full lifecycle visibility; do not remove it.
-- **Flavour 1 (candidate memory) is the demo story** — Flavour 2 (role memory via `memify()`) is stretch only.
-
-## Demo dependencies
-
-- `seed_memory.py` must be committed and reproducible on any team machine — it pre-loads 2–3 synthetic sessions so `recall()` returns meaningful context even with no real users.
-- `GROQ_API_KEY` must be set in the environment (`.env` file, not committed).
-- Cognee config: configured via `agents/memory._cognee_config()` to use Groq (OpenAI-compatible endpoint).
-
-## Submission checklist (Jul 5)
-
-- [ ] Full demo flow runs 3+ times on a clean machine without crashing
-- [ ] `forget(candidate_id)` button visible and functional
-- [ ] All five Cognee lifecycle APIs used: `cognify`, `remember`, `recall`, `memify`, `forget`
-- [ ] Backup demo video recorded
-- [ ] README written with architecture diagram
-- [ ] Submission writeup explains specifically what each Cognee lifecycle call does (this is scored)
+- Do not add Streamlit, LangChain, or LlamaIndex dependencies.
+- `forget(candidate_id)` must remain visible and functional in the UI — judges score on it.
+- All five Cognee lifecycle APIs must be used in the submission.
+- The JSON sidecar is the reliable data source; Cognee is the semantic enrichment layer.

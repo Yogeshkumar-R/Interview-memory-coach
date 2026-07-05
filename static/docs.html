@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Documentation — Interview Memory Coach</title>
+<link rel="icon" type="image/png" href="/static/ai.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ─── Design tokens (exact match to index.html) ─────────────────────────── */
+:root {
+  --bg:           #080d1a;
+  --surface:      #0e1629;
+  --glass:        rgba(255,255,255,0.03);
+  --glass2:       rgba(255,255,255,0.06);
+  --glass-accent: rgba(0,212,255,0.06);
+  --border:       rgba(255,255,255,0.07);
+  --accent:       #00d4ff;
+  --accent-dim:   rgba(0,212,255,0.10);
+  --accent-glow:  rgba(0,212,255,0.22);
+  --purple:       #7c3aed;
+  --purple-dim:   rgba(124,58,237,0.12);
+  --green:        #10b981;
+  --green-dim:    rgba(16,185,129,0.12);
+  --amber:        #f59e0b;
+  --amber-dim:    rgba(245,158,11,0.12);
+  --red:          #ef4444;
+  --red-dim:      rgba(239,68,68,0.12);
+  --ink:          #e2e8f0;
+  --body:         #94a3b8;
+  --muted:        #64748b;
+  --faint:        #1e293b;
+  --shadow:       0 20px 40px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.055);
+  --mono: 'IBM Plex Mono','Courier New',monospace;
+  --sans: 'Inter',system-ui,sans-serif;
+  --blur: blur(20px);
+  --r:    12px;
+  --r-sm: 8px;
+  --nav-w: 252px;
+  --bar-h: 52px;
+}
+:root[data-theme="light"] {
+  --bg:           #f0f4f8;
+  --surface:      #ffffff;
+  --glass:        rgba(255,255,255,0.72);
+  --glass2:       rgba(255,255,255,0.90);
+  --glass-accent: rgba(0,145,181,0.07);
+  --border:       rgba(0,0,0,0.07);
+  --accent:       #0091b5;
+  --accent-dim:   rgba(0,145,181,0.10);
+  --accent-glow:  rgba(0,145,181,0.20);
+  --purple:       #6d28d9;
+  --purple-dim:   rgba(109,40,217,0.10);
+  --green:        #059669;
+  --green-dim:    rgba(5,150,105,0.10);
+  --amber:        #d97706;
+  --amber-dim:    rgba(217,119,6,0.10);
+  --red:          #dc2626;
+  --red-dim:      rgba(220,38,38,0.10);
+  --ink:          #0f172a;
+  --body:         #334155;
+  --muted:        #64748b;
+  --faint:        #e2e8f0;
+  --shadow:       0 8px 24px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.95);
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: var(--sans); font-size: 15px; line-height: 1.7;
+  color: var(--body); background: var(--bg); min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+strong { color: var(--ink); font-weight: 600; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--faint); border-radius: 2px; }
+
+/* ─── Top bar ────────────────────────────────────────────────────────────── */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+  height: var(--bar-h); display: flex; align-items: center; gap: 14px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(8,13,26,0.88);
+  backdrop-filter: var(--blur);
+}
+:root[data-theme="light"] .topbar { background: rgba(240,244,248,0.88); }
+
+.topbar-back {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: var(--r-sm);
+  border: 1px solid var(--border); background: var(--glass);
+  color: var(--muted); font-size: .82rem; font-weight: 600;
+  backdrop-filter: var(--blur); transition: all .2s; text-decoration: none;
+}
+.topbar-back:hover { background: var(--glass2); color: var(--ink); text-decoration: none; }
+.topbar-back svg { flex-shrink: 0; }
+
+.topbar-wordmark {
+  display: flex; align-items: center; gap: 8px;
+}
+.topbar-mark {
+  width: 26px; height: 26px; border-radius: 6px;
+  background: linear-gradient(135deg,var(--accent),#0091b5);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-weight: 600; font-size: .62rem;
+  color: #080d1a; box-shadow: 0 2px 8px var(--accent-glow); flex-shrink: 0;
+}
+.topbar-name {
+  font-size: .82rem; font-weight: 700; color: var(--ink);
+  white-space: nowrap;
+}
+.topbar-slash { color: var(--muted); margin: 0 2px; }
+.topbar-section { font-size: .82rem; color: var(--muted); }
+
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.btn-theme {
+  width: 32px; height: 32px; border-radius: var(--r-sm);
+  border: 1px solid var(--border); background: var(--glass);
+  color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .88rem; backdrop-filter: var(--blur); transition: all .2s;
+}
+.btn-theme:hover { background: var(--glass2); color: var(--ink); }
+
+/* ─── Side nav ───────────────────────────────────────────────────────────── */
+.doc-nav {
+  position: fixed; top: var(--bar-h); left: 0; bottom: 0;
+  width: var(--nav-w); overflow-y: auto; overflow-x: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  padding: 20px 12px 32px;
+  display: flex; flex-direction: column;
+  z-index: 100;
+}
+/* Dot-grid — matches the main app sidebar */
+.doc-nav::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .18;
+  background-image:
+    radial-gradient(circle, rgba(0,212,255,.2) 1px, transparent 1px),
+    radial-gradient(circle, rgba(124,58,237,.12) 1px, transparent 1px);
+  background-size: 44px 44px, 30px 30px;
+  background-position: 0 0, 22px 15px;
+}
+
+.nav-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px 16px; border-bottom: 1px solid var(--border);
+  margin-bottom: 8px; position: relative;
+}
+.nav-brand-mark {
+  width: 30px; height: 30px; border-radius: 7px;
+  background: linear-gradient(135deg,var(--accent),#0091b5);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-weight: 600; font-size: .6rem;
+  color: #080d1a; box-shadow: 0 2px 8px var(--accent-glow); flex-shrink: 0;
+}
+.nav-brand-text { flex: 1; min-width: 0; }
+.nav-brand-name {
+  font-size: .78rem; font-weight: 700; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nav-brand-sub {
+  font-family: var(--mono); font-size: .56rem; color: var(--muted);
+  letter-spacing: .08em; text-transform: uppercase;
+}
+
+.nav-group { margin-bottom: 4px; position: relative; }
+.nav-group-label {
+  font-family: var(--mono); font-size: .57rem; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--muted);
+  padding: 14px 12px 5px; display: block; position: relative;
+}
+.nav-link {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: var(--r-sm);
+  font-size: .84rem; color: var(--muted);
+  border-left: 2px solid transparent;
+  transition: color .15s, background .15s, border-color .15s;
+  position: relative;
+}
+.nav-link:hover { color: var(--ink); background: var(--glass2); text-decoration: none; }
+.nav-link.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-left-color: var(--accent);
+}
+
+/* ─── Main content ───────────────────────────────────────────────────────── */
+.doc-content {
+  margin-left: var(--nav-w);
+  padding: calc(var(--bar-h) + 28px) 48px 80px 48px;
+  min-height: 100vh;
+}
+
+/* ─── Section cards ──────────────────────────────────────────────────────── */
+.doc-section {
+  max-width: 780px;
+  background: linear-gradient(135deg, rgba(0,212,255,.018) 0%, transparent 55%),
+              var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 32px 36px 28px;
+  margin-bottom: 16px;
+  backdrop-filter: var(--blur);
+  scroll-margin-top: calc(var(--bar-h) + 16px);
+}
+:root[data-theme="light"] .doc-section {
+  background: linear-gradient(135deg, rgba(0,145,181,.025) 0%, transparent 55%),
+              var(--glass);
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+
+/* ─── Typography inside cards ────────────────────────────────────────────── */
+.eyebrow {
+  font-family: var(--mono); font-size: .58rem; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--accent); opacity: .8;
+  display: block; margin-bottom: 6px;
+}
+
+/* Section title — left accent stripe is the signature element */
+.doc-section > h1,
+.doc-section > .section-header > h1 {
+  font-size: 1.38rem; font-weight: 700; color: var(--ink);
+  line-height: 1.25; text-wrap: balance;
+  padding-left: 14px;
+  border-left: 2px solid var(--accent);
+  margin-bottom: 16px;
+  letter-spacing: -.01em;
+}
+
+.doc-section h2 {
+  font-size: 1.02rem; font-weight: 700; color: var(--ink);
+  margin: 32px 0 10px; letter-spacing: -.005em;
+  display: flex; align-items: center; gap: 8px;
+}
+.doc-section h2::after {
+  content: ''; flex: 1; height: 1px; background: var(--border); margin-left: 4px;
+}
+
+.doc-section h3 {
+  font-family: var(--mono); font-size: .82rem; font-weight: 600;
+  color: var(--accent); margin: 24px 0 6px; opacity: .9;
+}
+
+.doc-section p {
+  color: var(--body); margin-bottom: 12px; max-width: 66ch;
+}
+.doc-section p:last-child { margin-bottom: 0; }
+
+.lead {
+  font-size: 1rem; color: var(--ink); line-height: 1.65;
+  margin-bottom: 20px; max-width: 60ch;
+}
+
+.doc-section ul, .doc-section ol {
+  padding-left: 18px; margin-bottom: 12px; max-width: 62ch;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.doc-section li { color: var(--body); }
+.doc-section li::marker { color: var(--accent); }
+
+/* ─── Steps ──────────────────────────────────────────────────────────────── */
+.steps { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; max-width: 56ch; }
+.step-item {
+  display: flex; gap: 14px; align-items: flex-start;
+  padding: 12px 14px; border-radius: var(--r-sm);
+  background: var(--glass); border: 1px solid var(--border);
+  transition: border-color .2s;
+}
+.step-item:hover { border-color: rgba(0,212,255,.18); }
+.step-num {
+  width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%;
+  background: var(--accent-dim); border: 1px solid rgba(0,212,255,.28);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: .68rem; font-weight: 600; color: var(--accent);
+  margin-top: 1px;
+}
+.step-body { flex: 1; }
+.step-body strong { color: var(--ink); display: block; margin-bottom: 2px; }
+.step-body p { margin: 0; font-size: .88rem; }
+
+/* ─── Callouts ───────────────────────────────────────────────────────────── */
+.callout {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 13px 16px; border-radius: var(--r-sm);
+  margin: 18px 0; border-left: 2px solid; max-width: 62ch;
+}
+.callout-icon { font-size: .9rem; flex-shrink: 0; margin-top: 2px; line-height: 1; }
+.callout-body { flex: 1; }
+.callout-body strong { display: block; margin-bottom: 2px; font-size: .88rem; color: inherit; }
+.callout-body p { margin: 0; font-size: .86rem; color: var(--body); }
+.callout.info   { background: rgba(0,212,255,0.06);  border-color: var(--accent); }
+.callout.tip    { background: rgba(16,185,129,0.06); border-color: var(--green);  }
+.callout.warn   { background: rgba(245,158,11,0.06); border-color: var(--amber);  }
+.callout.danger { background: rgba(239,68,68,0.06);  border-color: var(--red);    }
+.callout.info   .callout-icon, .callout.info   .callout-body strong { color: var(--accent); }
+.callout.tip    .callout-icon, .callout.tip    .callout-body strong { color: var(--green);  }
+.callout.warn   .callout-icon, .callout.warn   .callout-body strong { color: var(--amber);  }
+.callout.danger .callout-icon, .callout.danger .callout-body strong { color: var(--red);    }
+
+/* ─── Inline code ────────────────────────────────────────────────────────── */
+code {
+  font-family: var(--mono); font-size: .83em;
+  background: rgba(0,212,255,0.08); color: var(--accent);
+  padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+}
+
+/* ─── Code blocks ────────────────────────────────────────────────────────── */
+pre {
+  background: var(--faint); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 36px 16px 16px;
+  overflow-x: auto; margin: 14px 0; position: relative;
+  max-width: 62ch;
+}
+pre code {
+  background: none; color: var(--ink); font-size: .82rem;
+  padding: 0; white-space: pre; line-height: 1.65;
+}
+.copy-btn {
+  position: absolute; top: 8px; right: 8px;
+  padding: 3px 10px; font-size: .68rem; font-family: var(--mono); font-weight: 600;
+  background: var(--glass2); border: 1px solid var(--border);
+  border-radius: 5px; color: var(--muted); cursor: pointer; transition: all .2s;
+}
+.copy-btn:hover { color: var(--ink); border-color: rgba(255,255,255,.14); }
+.copy-btn.copied { color: var(--green); border-color: rgba(16,185,129,.4); }
+
+/* ─── Tables ─────────────────────────────────────────────────────────────── */
+.table-wrap {
+  overflow-x: auto; margin: 14px 0; max-width: 62ch;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+}
+table { width: 100%; border-collapse: collapse; font-size: .87rem; }
+th {
+  text-align: left; padding: 9px 14px;
+  font-family: var(--mono); font-size: .66rem; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted);
+  background: var(--faint);
+  border-bottom: 1px solid var(--border);
+}
+th:first-child { border-radius: var(--r-sm) 0 0 0; }
+th:last-child  { border-radius: 0 var(--r-sm) 0 0; }
+td {
+  padding: 9px 14px; border-bottom: 1px solid var(--border);
+  color: var(--body); vertical-align: top;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--glass); }
+
+/* ─── Score badges ───────────────────────────────────────────────────────── */
+.score-grid { display: flex; flex-direction: column; gap: 7px; margin: 12px 0; max-width: 52ch; }
+.score-row  { display: flex; align-items: center; gap: 12px; }
+.score-badge {
+  font-family: var(--mono); font-size: .75rem; font-weight: 600;
+  min-width: 52px; text-align: center; padding: 4px 8px;
+  border-radius: 5px; white-space: nowrap;
+}
+.score-badge.green  { background: var(--green-dim);  color: var(--green);  }
+.score-badge.amber  { background: var(--amber-dim);  color: var(--amber);  }
+.score-badge.red    { background: var(--red-dim);    color: var(--red);    }
+.score-desc { font-size: .88rem; color: var(--body); }
+
+/* ─── Node legend ────────────────────────────────────────────────────────── */
+.node-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 12px 0; }
+.node-item   { display: flex; align-items: center; gap: 8px; font-size: .88rem; }
+.node-dot {
+  width: 13px; height: 13px; border-radius: 50%;
+  box-shadow: 0 0 8px currentColor; flex-shrink: 0;
+}
+
+/* ─── Developer banner ───────────────────────────────────────────────────── */
+.dev-banner {
+  display: none; padding: 12px 16px; border-radius: var(--r-sm);
+  background: var(--purple-dim); border: 1px solid rgba(124,58,237,.3);
+  margin: 16px 0; max-width: 62ch;
+}
+.dev-banner.visible { display: block; }
+.dev-banner p { margin: 0; font-size: .88rem; color: var(--body); }
+.dev-banner code { background: rgba(124,58,237,.14); color: #a78bfa; }
+.dev-banner strong { color: #a78bfa; }
+
+/* ─── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 840px) {
+  :root { --nav-w: 0px; }
+  .doc-nav { display: none; }
+  .doc-content { margin-left: 0; padding-left: 20px; padding-right: 20px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Top bar ──────────────────────────────────────────────────────────── -->
+<header class="topbar">
+  <a class="topbar-back" href="/">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      <path d="M8 2L4 6L8 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    App
+  </a>
+  <div class="topbar-wordmark">
+    <div class="topbar-mark">IMC</div>
+    <span class="topbar-name">Memory Coach</span>
+    <span class="topbar-slash">/</span>
+    <span class="topbar-section">Docs</span>
+  </div>
+  <div class="topbar-right">
+    <button class="btn-theme" id="btn-theme" title="Toggle theme">☀</button>
+  </div>
+</header>
+
+<!-- ── Side nav ─────────────────────────────────────────────────────────── -->
+<nav class="doc-nav" aria-label="Documentation sections">
+  <div class="nav-brand">
+    <div class="nav-brand-mark">IMC</div>
+    <div class="nav-brand-text">
+      <div class="nav-brand-name">Interview Memory Coach</div>
+      <div class="nav-brand-sub">Documentation</div>
+    </div>
+  </div>
+
+  <div class="nav-group">
+    <span class="nav-group-label">Getting started</span>
+    <a class="nav-link" href="#overview">Overview</a>
+    <a class="nav-link" href="#quick-start">Quick start</a>
+  </div>
+
+  <div class="nav-group">
+    <span class="nav-group-label">Using the app</span>
+    <a class="nav-link" href="#intake">Intake view</a>
+    <a class="nav-link" href="#interview">Interview session</a>
+    <a class="nav-link" href="#report">Report &amp; scores</a>
+  </div>
+
+  <div class="nav-group">
+    <span class="nav-group-label">Features</span>
+    <a class="nav-link" href="#memory">How memory works</a>
+    <a class="nav-link" href="#voice">Voice input</a>
+    <a class="nav-link" href="#fit-analysis">Fit analysis</a>
+  </div>
+
+  <div class="nav-group">
+    <span class="nav-group-label">Reference</span>
+    <a class="nav-link" href="#data-privacy">Data &amp; privacy</a>
+    <a class="nav-link" href="#troubleshooting">Troubleshooting</a>
+    <a class="nav-link" href="#developer">Developer notes</a>
+  </div>
+</nav>
+
+<!-- ── Main content ─────────────────────────────────────────────────────── -->
+<main class="doc-content">
+
+  <!-- Overview ──────────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="overview">
+    <span class="eyebrow">Getting started</span>
+    <h1>Interview Memory Coach</h1>
+    <p class="lead">
+      An AI interview system that remembers candidates across sessions.
+      Upload a job description and resume, run a live streaming interview,
+      receive a scored report — and when the same candidate returns, the AI
+      recalls everything: strengths, gaps, and past performance.
+    </p>
+
+    <h2>The three-view flow</h2>
+    <div class="steps">
+      <div class="step-item">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <strong>Intake</strong>
+          <p>Set up the candidate, upload the JD and resume, review the fit analysis before the interview begins.</p>
+        </div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <strong>Interview</strong>
+          <p>Conduct a streaming AI interview with text or voice answers. Prior session memory shapes question depth in real time.</p>
+        </div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <strong>Report</strong>
+          <p>View skill scores, gap analysis, the candidate memory graph, and a hiring recommendation. Export or delete candidate data.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="callout-icon">◈</span>
+      <div class="callout-body">
+        <strong>Memory persists across sessions</strong>
+        <p>When a candidate returns for a second interview, the AI automatically loads their prior scores and known gaps. No manual setup required.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick start ───────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="quick-start">
+    <span class="eyebrow">Getting started</span>
+    <h1>Quick start</h1>
+
+    <h2>Prerequisites</h2>
+    <ul>
+      <li>Python 3.10+</li>
+      <li>A Groq API key — free at <a href="https://console.groq.com" target="_blank">console.groq.com</a></li>
+    </ul>
+
+    <h2>Installation</h2>
+    <pre><button class="copy-btn">copy</button><code>git clone &lt;repo-url&gt;
+cd Interview-memory-coach
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env: add GROQ_API_KEY=gsk_...
+uvicorn server:app --reload --port 8000</code></pre>
+    <p>Open <code>http://localhost:8000</code> in your browser.</p>
+
+    <h2>First interview</h2>
+    <div class="steps">
+      <div class="step-item">
+        <div class="step-num">1</div>
+        <div class="step-body"><strong>Enter a Candidate ID</strong><p>Type a unique ID like <code>alice_jones</code>. This is the memory key across sessions.</p></div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">2</div>
+        <div class="step-body"><strong>Paste the job description</strong><p>Full JD text — skills, experience requirements, responsibilities.</p></div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">3</div>
+        <div class="step-body"><strong>Upload or paste the resume</strong><p>PDF drag-and-drop or paste text directly.</p></div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">4</div>
+        <div class="step-body"><strong>Review the fit analysis</strong><p>The match score and gap tags appear once both fields are populated.</p></div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">5</div>
+        <div class="step-body"><strong>Click Start Interview</strong><p>The AI builds the candidate's entity graph (~5s) and begins the session.</p></div>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <span class="callout-icon">⚡</span>
+      <div class="callout-body">
+        <strong>First-run delay</strong>
+        <p>On the very first <em>Start Interview</em>, Cognee runs ~20 database migrations (~5–8s). Subsequent sessions skip this and start immediately. Open the app a minute before a demo to let migrations complete quietly.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Intake ────────────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="intake">
+    <span class="eyebrow">Using the app</span>
+    <h1>Intake view</h1>
+
+    <h3>Candidate ID</h3>
+    <p>A unique identifier used as the memory key. The same ID across sessions is what enables cross-session recall.</p>
+    <ul>
+      <li>Allowed: letters, numbers, underscores, hyphens</li>
+      <li>Maximum 40 characters; case-sensitive</li>
+      <li>Examples: <code>alice_jones</code>, <code>candidate-001</code>, <code>jsmith_2026</code></li>
+    </ul>
+
+    <h3>Candidate selector</h3>
+    <p>The dropdown lists all candidates with prior sessions. Select one to load history, or click <strong>+ New</strong> to type a new ID. When a returning candidate is selected, a purple chip shows the session count — the AI uses this context automatically.</p>
+
+    <h3>Job description</h3>
+    <p>Paste the full JD text. The system extracts required skills, experience levels, and role expectations. Recommended length: 200–2000 words.</p>
+
+    <h3>Resume</h3>
+    <ul>
+      <li><strong>PDF upload</strong> — Drag-and-drop or click the upload area. Requires a PDF with selectable text (not a scanned image). Max 10 MB.</li>
+      <li><strong>Paste text</strong> — Use the text area directly when PDF extraction fails.</li>
+    </ul>
+
+    <div class="callout tip">
+      <span class="callout-icon">✓</span>
+      <div class="callout-body">
+        <strong>Check PDF extraction</strong>
+        <p>After uploading, glance at the character count next to the field. Under 100 characters usually means the PDF is a scanned image — paste the text directly instead.</p>
+      </div>
+    </div>
+
+    <h3>Start Interview button</h3>
+    <p>Enabled once Candidate ID, JD, and Resume are all filled. Clicking it runs:</p>
+    <ol>
+      <li>Intake agent — extracts entities from JD + resume</li>
+      <li><code>cognify()</code> — builds the candidate entity graph in Cognee</li>
+      <li><code>recall()</code> — loads prior session context (returning candidates only)</li>
+      <li>Question generation — tailored to JD↔resume gaps</li>
+    </ol>
+  </section>
+
+  <!-- Interview ─────────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="interview">
+    <span class="eyebrow">Using the app</span>
+    <h1>Interview session</h1>
+
+    <h3>Prior memory banner</h3>
+    <p>For returning candidates, a blue banner at the top of the chat shows which prior context was loaded:</p>
+    <pre><code>Memory active · Jun 15 2026
+Candidate scored 2/5 on distributed systems.
+Probing this area deeper this session.</code></pre>
+
+    <h3>Question queue</h3>
+    <p>The right panel lists all questions. Completed questions are checked off in green. The queue is generated at session start and does not change mid-session.</p>
+
+    <h3>Answering with text</h3>
+    <p>Type in the text field at the bottom and press <strong>Enter</strong> or click <strong>Send</strong>. The AI evaluator responds in real time — streamed character by character — with commentary followed by the next question.</p>
+
+    <h3>Answering with voice</h3>
+    <ol>
+      <li>Click the microphone button to begin recording</li>
+      <li>Speak your answer naturally</li>
+      <li>Click stop when done</li>
+      <li>Review the Whisper transcript — edit if needed</li>
+      <li>Click <strong>Submit</strong></li>
+    </ol>
+
+    <h3>Ending the interview</h3>
+    <p>After all questions are answered, the <strong>Generate Report</strong> button activates in the right panel. The analysis agent scores each answer (~5–10s).</p>
+
+    <div class="callout info">
+      <span class="callout-icon">◈</span>
+      <div class="callout-body">
+        <strong>Memory writes in the background</strong>
+        <p>After each answer, the Q&amp;A pair is stored in Cognee's graph asynchronously — it never delays the next question from appearing.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Report ────────────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="report">
+    <span class="eyebrow">Using the app</span>
+    <h1>Report &amp; scores</h1>
+
+    <h2>Recommendation score (0–100)</h2>
+    <div class="score-grid">
+      <div class="score-row"><div class="score-badge green">75–100</div><span class="score-desc">Strong candidate — recommend proceeding</span></div>
+      <div class="score-row"><div class="score-badge amber">50–74</div><span class="score-desc">Consider — conditional, gaps identified</span></div>
+      <div class="score-row"><div class="score-badge red">0–49</div><span class="score-desc">Pass — significant gaps vs. role requirements</span></div>
+    </div>
+
+    <h2>Skill scores (1–5)</h2>
+    <div class="score-grid">
+      <div class="score-row"><div class="score-badge green">4–5</div><span class="score-desc">Strong — clear evidence, meets or exceeds bar</span></div>
+      <div class="score-row"><div class="score-badge amber">3</div><span class="score-desc">Adequate — meets minimum bar with caveats</span></div>
+      <div class="score-row"><div class="score-badge red">1–2</div><span class="score-desc">Below bar — gaps or inconsistencies in responses</span></div>
+    </div>
+
+    <h2>Memory graph</h2>
+    <p>A canvas visualization of the candidate's knowledge graph in Cognee. Nodes represent:</p>
+    <div class="node-legend">
+      <div class="node-item"><div class="node-dot" style="background:#00d4ff;color:#00d4ff"></div><span>Candidate</span></div>
+      <div class="node-item"><div class="node-dot" style="background:#7c3aed;color:#7c3aed"></div><span>Session</span></div>
+      <div class="node-item"><div class="node-dot" style="background:#10b981;color:#10b981"></div><span>Skill (strength)</span></div>
+      <div class="node-item"><div class="node-dot" style="background:#ef4444;color:#ef4444"></div><span>Gap</span></div>
+    </div>
+    <p>Click any node to inspect its stored detail below the graph.</p>
+
+    <h2>Actions</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Action</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Export session</strong></td><td>Downloads JSON with all questions, answers, and the full report</td></tr>
+          <tr><td><strong>New Interview</strong></td><td>Resets the UI. Candidate memory in Cognee is preserved for next time</td></tr>
+          <tr><td><strong>Forget candidate</strong></td><td>Permanently deletes all data — Cognee graph, vectors, session history. Cannot be undone.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout danger">
+      <span class="callout-icon">⚠</span>
+      <div class="callout-body">
+        <strong>Forget is permanent</strong>
+        <p>The GDPR forget button immediately and irreversibly deletes all stored data for the candidate across Cognee and the local JSON sidecar. There is no undo.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Memory ────────────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="memory">
+    <span class="eyebrow">Features</span>
+    <h1>How memory works</h1>
+    <p class="lead">Five Cognee lifecycle APIs power the memory system, each with a distinct role in the interview workflow.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>API</th><th>When called</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>cognify()</code></td>
+            <td>Session start</td>
+            <td>Processes JD + resume into a knowledge graph: Candidate, Skills, Role entities and their relationships. Persists across sessions.</td>
+          </tr>
+          <tr>
+            <td><code>remember()</code></td>
+            <td>After each answer</td>
+            <td>Stores the Q&amp;A pair in the candidate's memory graph in the background. Enables future sessions to recall specific answers.</td>
+          </tr>
+          <tr>
+            <td><code>recall()</code></td>
+            <td>Session start (returning)</td>
+            <td>Retrieves prior scores, gaps, and session context. Produces the "Memory active" banner and shapes question depth.</td>
+          </tr>
+          <tr>
+            <td><code>memify()</code></td>
+            <td>Session end</td>
+            <td>Writes role-level quality metadata back to the graph (<code>QuestionTemplate → performed_well_on → Role</code>).</td>
+          </tr>
+          <tr>
+            <td><code>forget()</code></td>
+            <td>GDPR button</td>
+            <td>Permanently wipes all graph and vector store entries for the candidate, plus the local JSON sidecar entry.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Storage locations</h2>
+    <ul>
+      <li><strong>Cognee graph + vectors</strong> — NetworkX graph and LanceDB vectors inside the Python venv (<code>~/.cognee/</code>). Powers semantic <code>recall()</code> queries.</li>
+      <li><strong>JSON sidecar</strong> — <code>~/.cognee_coach/sessions.json</code>. Structured index for deterministic lookups: candidate list, session history sorted by date, report scores.</li>
+    </ul>
+
+    <div class="callout info">
+      <span class="callout-icon">◈</span>
+      <div class="callout-body">
+        <strong>Memory survives server restarts</strong>
+        <p>Both stores are on disk. Restarting the server preserves all candidate memory — only the in-memory active interview session state is lost on restart.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Voice ─────────────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="voice">
+    <span class="eyebrow">Features</span>
+    <h1>Voice input</h1>
+
+    <h2>Browser support</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Browser</th><th>Status</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Chrome 49+</td><td>✓ Full</td><td>Preferred — webm/opus</td></tr>
+          <tr><td>Firefox 57+</td><td>✓ Full</td><td>webm/opus</td></tr>
+          <tr><td>Edge 79+</td><td>✓ Full</td><td>webm/opus</td></tr>
+          <tr><td>Safari 14.1+</td><td>✓ Supported</td><td>mp4/aac — may need explicit permission</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Microphone permissions</h2>
+    <p>When you first click the microphone, the browser prompts for access. Click <strong>Allow</strong>. If you previously denied:</p>
+    <ul>
+      <li><strong>Chrome:</strong> Lock icon in address bar → Microphone → Allow</li>
+      <li><strong>Firefox:</strong> Preferences → Privacy → Permissions → Microphone</li>
+      <li><strong>Safari:</strong> Safari → Settings for This Website → Microphone → Allow</li>
+    </ul>
+
+    <div class="callout warn">
+      <span class="callout-icon">⚡</span>
+      <div class="callout-body">
+        <strong>HTTPS or localhost required</strong>
+        <p>MediaRecorder is blocked on plain HTTP for non-localhost origins. The app works at <code>http://localhost:8000</code>. For network exposure, use HTTPS.</p>
+      </div>
+    </div>
+
+    <h2>Recording tips</h2>
+    <ul>
+      <li>Speak at a normal pace, ~50cm from the microphone</li>
+      <li>Minimize background noise — Whisper handles accents well but noise degrades accuracy</li>
+      <li>After transcription, edit the text before submitting if needed</li>
+    </ul>
+  </section>
+
+  <!-- Fit analysis ──────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="fit-analysis">
+    <span class="eyebrow">Features</span>
+    <h1>Fit analysis</h1>
+    <p>The fit analysis band appears in the Intake view after both the JD and Resume fields have content. It runs automatically 500ms after you stop typing.</p>
+
+    <h2>What the band shows</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Match score</strong></td><td>0–100 alignment between JD requirements and resume. A signal for interview focus, not a hiring decision.</td></tr>
+          <tr><td><strong>Role title</strong></td><td>The role the system infers from the JD text.</td></tr>
+          <tr><td><strong>Experience hint</strong></td><td>Estimated level from JD language (junior / mid / senior).</td></tr>
+          <tr><td><strong>Strengths</strong></td><td>Skills the resume demonstrates that the JD requires — cyan tags.</td></tr>
+          <tr><td><strong>Gaps</strong></td><td>Skills the JD requires that are absent in the resume — red tags.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout tip">
+      <span class="callout-icon">✓</span>
+      <div class="callout-body">
+        <strong>Gaps drive question selection</strong>
+        <p>The interview agent generates more probing questions for identified gaps. A candidate with a "distributed systems" gap will receive more targeted questions in that area.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Data & Privacy ─────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="data-privacy">
+    <span class="eyebrow">Reference</span>
+    <h1>Data &amp; privacy</h1>
+
+    <h2>What is stored and where</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Data</th><th>Location</th><th>Deleted by forget()</th></tr></thead>
+        <tbody>
+          <tr><td>Candidate memory graph, embeddings</td><td><code>~/.cognee/</code></td><td>Yes</td></tr>
+          <tr><td>Session history, scores, reports</td><td><code>~/.cognee_coach/sessions.json</code></td><td>Yes</td></tr>
+          <tr><td>Active interview state</td><td>Server memory (process-scoped)</td><td>Lost on restart</td></tr>
+          <tr><td>Audio during transcription</td><td>Sent to Groq API</td><td>Not retained by this app</td></tr>
+          <tr><td>LLM prompts / responses</td><td>Sent to Groq API</td><td>Not retained by this app</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>API key security</h2>
+    <p>Your <code>GROQ_API_KEY</code> is stored in <code>.env</code> on disk and loaded at startup. It is never exposed through any app endpoint. The file is listed in <code>.gitignore</code>.</p>
+
+    <h2>Swagger exposure</h2>
+    <p>Swagger UI is only available in development:</p>
+    <ul>
+      <li><strong>Development</strong> — <code>APP_ENV=development</code> (default): Swagger at <code>/dev/swagger</code></li>
+      <li><strong>Staging / Production</strong> — <code>APP_ENV=staging</code> or <code>production</code>: returns 404</li>
+    </ul>
+
+    <div class="callout danger">
+      <span class="callout-icon">⚠</span>
+      <div class="callout-body">
+        <strong>Forget is irreversible</strong>
+        <p>The GDPR forget button immediately and permanently deletes all data for the candidate. The action completes synchronously — there is no undo.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Troubleshooting ────────────────────────────────────────────────────── -->
+  <section class="doc-section" id="troubleshooting">
+    <span class="eyebrow">Reference</span>
+    <h1>Troubleshooting</h1>
+
+    <h2>Session start is slow</h2>
+    <p><strong>Cause:</strong> On the first-ever run, Cognee executes ~20 Alembic migrations (~5–10s).</p>
+    <p><strong>Fix:</strong> Subsequent starts skip migrations. For demos, open the app 1–2 minutes before presenting — let the health endpoint respond before starting an interview.</p>
+
+    <h2>Voice input not working</h2>
+    <ol>
+      <li>Check browser microphone permissions (lock icon → Microphone → Allow)</li>
+      <li>Ensure you're on <code>http://localhost</code> or <code>https://</code> — plain HTTP is blocked for non-localhost</li>
+      <li>Check the OS microphone isn't muted</li>
+      <li>Try Chrome if using a different browser</li>
+    </ol>
+
+    <h2>PDF not extracting text</h2>
+    <p><strong>Cause:</strong> PyMuPDF extracts selectable text. Scanned PDFs (image-only) return empty or garbage text.</p>
+    <p><strong>Fix:</strong> Paste the resume text directly into the text area.</p>
+
+    <h2>"Session not found" error</h2>
+    <p><strong>Cause:</strong> Active sessions are in server memory. A server restart loses in-progress sessions.</p>
+    <p><strong>Fix:</strong> Start a new interview from Intake. Candidate memory in Cognee and the JSON sidecar is not affected by restarts.</p>
+
+    <h2>Fit analysis band not appearing</h2>
+    <ul>
+      <li>Both JD and Resume must have content</li>
+      <li>The band appears 500ms after you stop typing — wait briefly</li>
+      <li>If the Groq API returns an error the band stays hidden — check server logs for <code>[analyze]</code> errors</li>
+    </ul>
+
+    <h2>Cognee retry warnings in logs</h2>
+    <p>Warnings like <em>"Retrying acreate_structured_output in 8.5 seconds"</em> are Cognee's internal graph extraction retrying in the background. They do not block the interview UI. See <code>.docs/architecture-decisions.md ADR-005</code> for full context.</p>
+  </section>
+
+  <!-- Developer notes ───────────────────────────────────────────────────── -->
+  <section class="doc-section" id="developer">
+    <span class="eyebrow">Reference</span>
+    <h1>Developer notes</h1>
+
+    <div class="dev-banner" id="dev-banner">
+      <p>◈ <strong>Development mode active</strong> — Swagger UI at <a href="/dev/swagger" target="_blank"><code>/dev/swagger</code></a> · ReDoc at <a href="/dev/redoc" target="_blank"><code>/dev/redoc</code></a></p>
+    </div>
+
+    <h2>API schema</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Environment</th><th>Swagger URL</th></tr></thead>
+        <tbody>
+          <tr><td><code>APP_ENV=development</code> (default)</td><td><a href="/dev/swagger"><code>/dev/swagger</code></a></td></tr>
+          <tr><td><code>APP_ENV=staging</code></td><td>404 — hidden</td></tr>
+          <tr><td><code>APP_ENV=production</code></td><td>404 — hidden</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Architecture docs</h2>
+    <ul>
+      <li><code>.docs/system-design.md</code> — Full architecture, API reference, storage schema</li>
+      <li><code>.docs/architecture-decisions.md</code> — ADR-001 through ADR-005</li>
+      <li><code>.docs/hangover-ai-plan.md</code> — Build log and key pivot decisions</li>
+      <li><code>CLAUDE.md</code> — Developer guidance for working with this codebase</li>
+    </ul>
+
+    <h2>Running in development</h2>
+    <pre><button class="copy-btn">copy</button><code>uvicorn server:app --reload --port 8000</code></pre>
+    <p>Watchfiles monitors <code>server.py</code> and <code>agents/</code>. Static files including this page are served directly and don't require a reload.</p>
+
+    <h2>Tech stack</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>Technology</th></tr></thead>
+        <tbody>
+          <tr><td>Backend</td><td>FastAPI + SSE streaming</td></tr>
+          <tr><td>UI</td><td>Vanilla JS, glassmorphism CSS, canvas graph</td></tr>
+          <tr><td>LLM (agents)</td><td>Groq <code>llama-3.3-70b-versatile</code> — direct SDK</td></tr>
+          <tr><td>LLM (Cognee graph)</td><td>Groq <code>llama-4-scout-17b-16e-instruct</code> — via LiteLLM</td></tr>
+          <tr><td>Memory</td><td>Cognee 1.2.2 — NetworkX + LanceDB</td></tr>
+          <tr><td>Embeddings</td><td>FastEmbed <code>BAAI/bge-small-en-v1.5</code> (local)</td></tr>
+          <tr><td>STT</td><td>Groq Whisper <code>whisper-large-v3</code></td></tr>
+          <tr><td>PDF parsing</td><td>PyMuPDF (fitz)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<script>
+/* ─── Theme toggle ──────────────────────────────────────────────────────── */
+const root = document.documentElement;
+const btnTheme = document.getElementById('btn-theme');
+const stored = localStorage.getItem('imc-theme');
+if (stored) root.setAttribute('data-theme', stored);
+btnTheme.textContent = root.getAttribute('data-theme') === 'light' ? '🌙' : '☀';
+btnTheme.addEventListener('click', () => {
+  const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  root.setAttribute('data-theme', next);
+  localStorage.setItem('imc-theme', next);
+  btnTheme.textContent = next === 'light' ? '🌙' : '☀';
+});
+
+/* ─── Active nav link via IntersectionObserver ──────────────────────────── */
+const sections = document.querySelectorAll('.doc-section[id]');
+const navLinks = document.querySelectorAll('.nav-link');
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navLinks.forEach(l =>
+        l.classList.toggle('active', l.getAttribute('href') === '#' + e.target.id)
+      );
+    }
+  });
+}, { rootMargin: '-52px 0px -55% 0px', threshold: 0 });
+sections.forEach(s => io.observe(s));
+
+/* ─── Copy buttons ──────────────────────────────────────────────────────── */
+document.querySelectorAll('.copy-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const code = btn.nextElementSibling?.textContent ?? '';
+    navigator.clipboard.writeText(code).then(() => {
+      btn.textContent = 'copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1800);
+    }).catch(() => {});
+  });
+});
+
+/* ─── Show dev banner when Swagger is available ─────────────────────────── */
+fetch('/api/health').then(r => r.json()).then(d => {
+  if (d.swagger) document.getElementById('dev-banner').classList.add('visible');
+}).catch(() => {});
+</script>
+</body>
+</html>
