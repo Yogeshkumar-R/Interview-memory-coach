@@ -42,7 +42,7 @@ def _inject_css():
         background: rgba(255,255,255,0.035) !important;
         border: 1px solid rgba(0,212,255,0.18) !important;
         border-radius: 7px !important;
-        color: #e2e8f0 !important;
+        color: var(--text) !important;
         font-family: 'DM Sans', sans-serif !important;
         font-size: 0.9rem !important;
         transition: border-color .2s, box-shadow .2s !important;
