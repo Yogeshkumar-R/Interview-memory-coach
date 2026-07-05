@@ -1,112 +1,125 @@
 # Interview Memory Coach
 
-> WeMakeDevs × Cognee Hackathon — Jun 29–Jul 5 2026
+> *WeMakeDevs × Cognee Hackathon* — Jun 29–Jul 5 2026
 
-An AI-powered interview system that **remembers candidates across sessions** using Cognee's memory lifecycle APIs. Upload a job description and resume, run a live streaming interview, get a scored report — and every session is stored so the next interview picks up exactly where the last one left off.
+An AI-powered interviewer that *remembers candidates across sessions* using Cognee's full memory lifecycle. Upload a job description and resume, run a live streaming interview, get a scored report — and every session is stored so the next interview picks up exactly where the last one left off.
 
 ---
 
 ## Demo flow
 
-```
-Upload JD + Resume  →  AI Interview (streaming)  →  Scored Report + Memory Graph
-                                ↑
-              Cognee recalls prior session context at start
-```
+
+Upload JD + Resume
+        │
+        ▼  cognify() — builds entity graph from JD + resume
+  AI Interview (streaming)
+        │
+        ├─ recall() at session start → surfaces prior performance
+        └─ remember() each turn    → stores Q&A pairs live
+        │
+        ▼
+  Scored Report + Canvas Memory Graph
+        │
+        └─ memify() — writes role-level quality metadata
+           forget() — GDPR wipe button
+
+
 
 ---
 
-## Setup
+## Blog
 
-**Prerequisites:** Python 3.10+, a [Groq API key](https://console.groq.com)
+Read the project write-up on Medium: [Interview Memory Coach](https://medium.com/@nivimala210/interview-memory-coach-an-ai-interviewer-that-never-forgets-627b131b0733)
 
-```bash
-# 1. Clone and enter the project
+---
+
+## Quick start
+
+*Prerequisites:* Python 3.10+, a [Groq API key](https://console.groq.com)
+
+bash
+# 1. Clone
 git clone <repo-url>
-cd Interview-memory-coach-
+cd Interview-memory-coach
 
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Set your Groq API key
+# 3. Configure
 cp .env.example .env
-# Edit .env and add your key: GROQ_API_KEY=gsk_...
+# Edit .env → GROQ_API_KEY=gsk_...
 
-# 4. Seed synthetic memory (pre-loads 2 prior sessions so recall() has data)
-python seed_memory.py
+# 4. Run
+uvicorn server:app --reload --port 8000
+# Open http://localhost:8000
 
-# 5. Run the app
-streamlit run app.py
-```
-
-To verify your environment before the first run:
-
-```bash
-python smoke_test.py
-```
 
 ---
 
-## Folder structure
+## Project structure
 
-```
-Interview-memory-coach-/
-├── app.py                   # Streamlit UI — three-page navigation
-├── seed_memory.py           # Pre-loads synthetic candidate sessions
-├── smoke_test.py            # Environment validation (run before demo)
-├── requirements.txt
-├── .env.example             # Template — copy to .env and fill in key
+
+Interview-memory-coach/
+├── server.py              # FastAPI backend — all API endpoints
+├── static/
+│   └── index.html         # Single-page glassmorphism UI (vanilla JS, no framework)
 │
 ├── agents/
-│   ├── base.py              # Groq client, retry wrapper, streaming helper
-│   ├── intake.py            # Parse JD + resume, cognify(), generate questions
-│   ├── interviewer.py       # Streaming responses, remember() per turn
-│   ├── analysis.py          # Score answers, gap analysis, memify()
-│   └── memory.py            # All five Cognee lifecycle wrappers
+│   ├── base.py            # Groq client + retry wrapper
+│   ├── intake.py          # Parse JD + resume → cognify() → question generation
+│   ├── interviewer.py     # Streaming dialogue + remember() per turn
+│   ├── analysis.py        # Post-session scoring + memify()
+│   ├── memory.py          # All five Cognee lifecycle wrappers + JSON sidecar
+│   ├── guardrails.py      # Input sanitization + candidate ID validation
+│   └── voice.py           # Groq Whisper STT via the Groq SDK
 │
-└── .claude/
-    ├── agents/              # Claude Code sub-agent definitions
-    └── skills/              # Claude Code skill definitions
-```
+├── requirements.txt
+├── .env.example
+└── CLAUDE.md              # Developer notes
+
 
 ---
 
 ## Architecture
 
-Three-layer stack: **Streamlit UI → Groq LLM agents → Cognee memory**
+mermaid
+graph TD
+    Browser["Browser SPA\nIntake · Interview · Report · Canvas graph"]
+    FastAPI["FastAPI — server.py\n/api/start · /api/answer SSE · /api/report\n/api/transcribe · /api/analyze · /api/candidates"]
+    Agents["Agent Layer\nintake · interviewer · analysis\nmemory · voice · guardrails"]
+    Cognee["Cognee Memory APIs\ncognify() · remember() · recall() · memify() · forget()"]
+    Groq["Groq API\nllama-3.3-70b-versatile — agents\nllama-4-scout-17b-16e-instruct — Cognee graph\nwhisper-large-v3 — STT"]
+    Storage["Persistent Storage\nNetworkX + LanceDB → ~/.cognee/\nJSON sidecar → ~/.cognee_coach/"]
 
-```
-app.py
-  └─ page: "upload"     → intake.run()       → cognify()
-  └─ page: "interview"  → interviewer         → remember() each turn
-                                              → recall() at session start
-  └─ page: "report"     → analysis.run()     → memify()
-                          forget button       → forget()
+    Browser -->|"REST + SSE streaming"| FastAPI
+    FastAPI -->|"agent function calls"| Agents
+    Agents -->|"5 Cognee lifecycle APIs"| Cognee
+    Agents -->|"direct Groq SDK"| Groq
+    Cognee -->|"LiteLLM groq/ prefix"| Groq
+    Cognee -->|"NetworkX · LanceDB"| Storage
 
-                                    Cognee memory layer
-                         (NetworkX graph + LanceDB vector, ~/.cognee/)
-```
 
-**LLM:** `llama-3.3-70b-versatile` via Groq (routed through LiteLLM's `groq/` prefix)  
-**Embeddings:** FastEmbed `BAAI/bge-small-en-v1.5` (local, no API key required)
+*LLM:* llama-3.3-70b-versatile via Groq for agents · llama-4-scout-17b-16e-instruct via Groq for Cognee's internal graph extraction (see ADR-003)  
+*Embeddings:* FastEmbed BAAI/bge-small-en-v1.5 (local, no API key)  
+*Memory store:* Cognee (NetworkX graph + LanceDB vector, ~/.cognee/) + JSON sidecar (~/.cognee_coach/sessions.json)
 
 ---
 
 ## Cognee memory lifecycle
 
-All five Cognee lifecycle APIs are used — this is the core of the submission:
+All five Cognee APIs are used — this is the core of the submission:
 
 | API | Where | What it does |
 |-----|-------|--------------|
-| `cognify()` | Intake agent | Parses the JD + resume text into a knowledge graph of entities (Candidate, Skills, Role). This graph persists across sessions. |
-| `remember()` | Interviewer agent — every turn | Stores each Q&A pair into the candidate's memory graph in real time as the interview progresses. |
-| `recall(candidate_id)` | Interviewer agent — session start | Retrieves prior session context (past scores, skill gaps, answered questions) so the AI doesn't repeat itself and can probe known weak areas. |
-| `memify()` | Analysis agent — session end | Writes role-level quality metadata back to the graph (`QuestionTemplate → performed_well_on → Role`) so future sessions for the same role improve. |
-| `forget(candidate_id)` | Report page — UI button | GDPR compliance: wipes the candidate's entire graph and local sidecar. Visible in every demo run. |
+| cognify() | Intake agent | Parses JD + resume into a knowledge graph (Candidate, Skills, Role entities). Graph persists across sessions. |
+| remember() | Interviewer — every turn | Stores each Q&A pair into the candidate's memory graph in real time as the interview progresses. |
+| recall(candidate_id) | Interviewer — session start | Retrieves prior session context (past scores, skill gaps) so the AI probes known weak areas and doesn't repeat questions. |
+| memify() | Analysis agent — session end | Writes role-level quality metadata back (QuestionTemplate → performed_well_on → Role) so future sessions for the same role improve. |
+| forget(candidate_id) | Report page — UI button | GDPR: wipes the candidate's entire Cognee graph and local sidecar. Visible in every demo run. |
 
 ### Memory graph schema
 
-```
+
 Candidate ──has_skill──────────> Skill
 Candidate ──applied_for────────> Role
 Role      ──requires_skill─────> Skill
@@ -115,7 +128,25 @@ Session   ──contains───────────> QAPair
 QAPair    ──assessed_by────────> Score
 Score     ──flags──────────────> Skill  (gap or strength)
 QuestionTemplate ──performed_well_on──> Role   (via memify)
-```
+
+
+---
+
+## API reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /api/start | Begin a session (multipart: candidate_id, jd_text, resume_file/resume_text) |
+| POST | /api/answer | Submit an answer → SSE stream of chunk / done events |
+| POST | /api/report | Generate scored report for a completed session |
+| POST | /api/transcribe | Transcribe audio via Groq Whisper |
+| POST | /api/analyze | Fit analysis: JD ↔️ resume match score + strengths/gaps |
+| POST | /api/parse-document | Extract text from PDF or plain text file |
+| GET  | /api/candidates | List all candidates with session counts |
+| GET  | /api/candidate/{id}/memory | Graph nodes/edges + prior session context |
+| GET  | /api/session/{id}/export | Export session JSON (questions, Q&A pairs, report) |
+| DELETE | /api/candidate/{id} | GDPR forget — deletes candidate from Cognee + sidecar |
+| GET  | /api/health | Health check |
 
 ---
 
@@ -123,12 +154,14 @@ QuestionTemplate ──performed_well_on──> Role   (via memify)
 
 | Layer | Technology |
 |-------|-----------|
-| UI | Streamlit — `st.write_stream()` for live streaming |
-| LLM | Groq SDK — `llama-3.3-70b-versatile` |
-| Memory | Cognee — NetworkX graph + LanceDB vector store |
-| Embeddings | FastEmbed — local `BAAI/bge-small-en-v1.5` |
+| UI | Vanilla JS, glassmorphism CSS, canvas-drawn memory graph |
+| Backend | FastAPI + SSE streaming |
+| LLM (agents) | Groq SDK — llama-3.3-70b-versatile |
+| LLM (Cognee graph) | Groq — llama-4-scout-17b-16e-instruct (structured output compliant) |
+| Memory | Cognee 1.2.2 — NetworkX graph + LanceDB vector store |
+| Embeddings | FastEmbed BAAI/bge-small-en-v1.5 (local) |
+| STT | Groq Whisper (whisper-large-v3) via Groq SDK |
 | PDF parsing | PyMuPDF (fitz) |
-| Graph viz | pyvis — embedded in report page |
 
 ---
 
@@ -136,6 +169,6 @@ QuestionTemplate ──performed_well_on──> Role   (via memify)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GROQ_API_KEY` | Yes | Your Groq API key from console.groq.com |
+| GROQ_API_KEY | Yes | Groq API key from console.groq.com |
 
-Memory is stored locally at `~/.cognee_coach/sessions.json` (structured sidecar) and `~/.cognee/` (Cognee graph + vectors). No external database required.
+Memory is stored locally — no external database required
