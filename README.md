@@ -41,7 +41,13 @@ Video Link : https://youtu.be/wDEWcbQSrMI?si=buKZGeKTMJT7nlDq
  Cross-Session Persistence: Deep Dive into recall()
 
  Interactive Canvas Memory Graph & The GDPR forget() Wipe
+---
 
+## Blog
+
+Read the project write-up on Medium: [Interview Memory Coach](https://medium.com/@nivimala210/interview-memory-coach-an-ai-interviewer-that-never-forgets-627b131b0733)
+
+---
 ---
 
 ## Quick start
