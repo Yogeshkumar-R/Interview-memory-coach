@@ -8,6 +8,8 @@ An AI-powered interviewer that **remembers candidates across sessions** using Co
 
 ## Demo flow
 
+
+
 ```
 Upload JD + Resume
         │
@@ -23,6 +25,22 @@ Upload JD + Resume
         └─ memify() — writes role-level quality metadata
            forget() — GDPR wipe button
 ```
+📺 Video Demo
+
+🎬 Watch the Project Walkthrough
+What's covered in the video:
+
+Video Link : https://youtu.be/wDEWcbQSrMI?si=buKZGeKTMJT7nlDq
+
+ Hackathon Overview & Problem Statement
+
+ Uploading JDs/Resumes & cognify() Graph Building
+
+ Live Streaming Interview & Real-Time remember() Hooks
+
+ Cross-Session Persistence: Deep Dive into recall()
+
+ Interactive Canvas Memory Graph & The GDPR forget() Wipe
 ---
 
 ## Blog
