@@ -23,7 +23,13 @@ Upload JD + Resume
         └─ memify() — writes role-level quality metadata
            forget() — GDPR wipe button
 ```
+---
 
+## Blog
+
+Read the project write-up on Medium: [Interview Memory Coach](https://medium.com/@nivimala210/interview-memory-coach-an-ai-interviewer-that-never-forgets-627b131b0733)
+
+---
 ---
 
 ## Quick start
